@@ -1,0 +1,71 @@
+import { Injectable, inject } from '@angular/core';
+import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http';
+import { Observable } from 'rxjs';
+import { environment } from '../../environments/environment';
+import * as M from './models';
+
+@Injectable({ providedIn: 'root' })
+export class ApiService {
+  private http = inject(HttpClient);
+  private base = environment.apiBase;
+
+  dashboard() { return this.http.get<M.Dashboard>(`${this.base}/dashboard`); }
+
+  topics() { return this.http.get<M.Topic[]>(`${this.base}/topics`); }
+  createTopic(name: string, description?: string) { return this.http.post<M.Topic>(`${this.base}/topics`, { name, description }); }
+  deleteTopic(id: number) { return this.http.delete<void>(`${this.base}/topics/${id}`); }
+
+  tags(q?: string) { return this.http.get<M.Tag[]>(`${this.base}/tags`, { params: q ? { q } : {} }); }
+  createTag(name: string) { return this.http.post<M.Tag>(`${this.base}/tags`, { name }); }
+  updateTag(id: number, name: string) { return this.http.put<M.Tag>(`${this.base}/tags/${id}`, { name }); }
+  deleteTag(id: number) { return this.http.delete<void>(`${this.base}/tags/${id}`); }
+
+  companies(q?: string) { return this.http.get<M.Company[]>(`${this.base}/companies`, { params: q ? { q } : {} }); }
+  company(id: number) { return this.http.get<M.Company>(`${this.base}/companies/${id}`); }
+  companySummary(id: number) { return this.http.get<M.CompanySummary>(`${this.base}/companies/${id}/summary`); }
+  createCompany(body: Partial<M.Company>) { return this.http.post<M.Company>(`${this.base}/companies`, body); }
+
+  questions(filter: Record<string, any>): Observable<M.Page<M.Question>> {
+    let p = new HttpParams();
+    Object.entries(filter).forEach(([k, v]) => {
+      if (v === null || v === undefined || v === '') return;
+      if (Array.isArray(v)) v.forEach(x => p = p.append(k, String(x))); else p = p.set(k, String(v));
+    });
+    return this.http.get<M.Page<M.Question>>(`${this.base}/questions`, { params: p });
+  }
+  question(id: number) { return this.http.get<M.Question>(`${this.base}/questions/${id}`); }
+  createQuestion(r: M.QuestionRequest) { return this.http.post<M.Question>(`${this.base}/questions`, r); }
+  updateQuestion(id: number, r: M.QuestionRequest) { return this.http.put<M.Question>(`${this.base}/questions/${id}`, r); }
+  deleteQuestion(id: number) { return this.http.delete<void>(`${this.base}/questions/${id}`); }
+
+  startImport(file: File, mode: M.AttributionMode, defaultCompanyId?: number | null, defaultTopicId?: number | null, tags?: string) {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('attributionMode', mode);
+    if (defaultCompanyId) fd.append('defaultCompanyId', String(defaultCompanyId));
+    if (defaultTopicId) fd.append('defaultTopicId', String(defaultTopicId));
+    if (tags) fd.append('tags', tags);
+    return this.http.post<M.ImportJob>(`${this.base}/imports`, fd);
+  }
+  importJob(id: number) { return this.http.get<M.ImportJob>(`${this.base}/imports/${id}`); }
+  candidates(id: number) { return this.http.get<M.Candidate[]>(`${this.base}/imports/${id}/candidates`); }
+  approve(id: number, candidateIds: number[]) { return this.http.post<M.ImportJob>(`${this.base}/imports/${id}/approve`, { candidateIds }); }
+  resolve(id: number, cid: number, action: M.ReviewAction, reason?: string) {
+    return this.http.post<M.Candidate>(`${this.base}/imports/${id}/candidates/${cid}/resolve`, { action, reason });
+  }
+  editCandidate(id: number, cid: number, body: any) { return this.http.put<M.Candidate>(`${this.base}/imports/${id}/candidates/${cid}`, body); }
+  failedRowsUrl(id: number) { return `${this.base}/imports/${id}/failed-rows.csv`; }
+}
+
+export function errorMessage(e: unknown): string {
+  if (e instanceof HttpErrorResponse) {
+    const body = e.error as M.ApiError | null;
+    if (body?.message) {
+      const fields = body.details && body.code === 'VALIDATION_FAILED'
+        ? ' — ' + Object.entries(body.details).map(([k, v]) => `${k}: ${v}`).join('; ') : '';
+      return body.message + fields;
+    }
+    return e.status === 0 ? 'Cannot reach the server. Is the backend running on :8080?' : `Request failed (${e.status})`;
+  }
+  return 'Unexpected error';
+}

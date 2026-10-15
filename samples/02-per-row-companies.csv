@@ -1,0 +1,6 @@
+question,topic,tags,company,difficulty,round,answer
+Explain HashMap internals,Java,"HashMap, Collections",Amazon,ADVANCED,Technical 1,Optional answer
+What is a Spring Bean?,Spring Boot,"IoC, Dependency Injection",Infosys,INTERMEDIATE,,Optional answer
+Explain Kafka consumer groups,Kafka,"Consumer Groups, Partitions",Accenture,INTERMEDIATE,,
+What is the difference between volatile and synchronized?,Java,"Concurrency, Multithreading",Amazon; Microsoft; Google,ADVANCED,,
+Explain ConcurrentHashMap internals,Java,"Concurrency, Collections",,ADVANCED,,

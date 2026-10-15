@@ -1,0 +1,4 @@
+question,topic,tags,difficulty,answer
+Explain HashMap internals,Java,"HashMap, Collections",ADVANCED,"Array of buckets; hash spreads keys; collisions chain then treeify after 8 entries (Java 8+); resize doubles capacity at load factor 0.75."
+What is a Spring Bean?,Spring Boot,"IoC, Dependency Injection",BEGINNER,
+How does @Transactional work in Spring?,Spring Boot,"Transactions, AOP",INTERMEDIATE,

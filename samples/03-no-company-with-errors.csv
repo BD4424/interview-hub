@@ -1,0 +1,5 @@
+question,topic,tags,difficulty,company
+What is an index in SQL?,Database / SQL,"Indexing",BEGINNER,Ignored when mode is NONE
+explain   hashmap INTERNALS?,Java,"Java Internals",ADVANCED,
+,Java,,BEGINNER,
+What is change detection in Angular?,Angular,"Change Detection",EXPERT,
