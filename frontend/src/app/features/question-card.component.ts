@@ -1,14 +1,16 @@
 import { Component, EventEmitter, Input, Output, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { Question } from '../core/models';
+import { FollowUpPanelComponent } from './follow-up-panel.component';
 
 @Component({
-  selector: 'app-question-card', standalone: true, imports: [RouterLink],
+  selector: 'app-question-card', standalone: true, imports: [RouterLink, FollowUpPanelComponent],
   template: `
   <div class="card">
     <div class="row" style="justify-content: space-between">
       <strong class="pre" style="flex:1">{{ q.questionText }}</strong>
       <div class="row">
+        <button class="secondary" (click)="ai.set(!ai())">{{ ai() ? 'Close AI' : 'AI follow-ups' }}</button>
         <a class="btn secondary" [routerLink]="['/questions', q.id, 'edit']">Edit</a>
         <button class="danger" (click)="delete.emit(q)">Delete</button>
       </div>
@@ -17,6 +19,7 @@ import { Question } from '../core/models';
       <span class="chip">{{ q.topicName }}</span>
       @if (q.difficulty) { <span class="chip diff">{{ q.difficulty }}</span> }
       @if (q.questionType) { <span class="chip diff">{{ q.questionType }}</span> }
+      @if (q.sourceType === 'AI_GENERATED') { <span class="chip warn">AI generated</span> }
       @for (t of q.tags; track t.id) { <span class="chip">#{{ t.name }}</span> }
       @for (c of q.companies; track c.companyId) { <span class="chip company">{{ c.companyName }}@if (c.interviewRound) { · {{ c.interviewRound }} }</span> }
       @if (!q.companies.length) { <span class="chip diff">company unknown</span> }
@@ -26,10 +29,12 @@ import { Question } from '../core/models';
       <button class="secondary" style="margin-top:.5rem" (click)="open.set(!open())">{{ open() ? 'Hide' : 'Show' }} answer</button>
       @if (open()) { <p class="pre">{{ q.answerText }}</p> }
     }
+    @if (ai()) { <app-follow-up-panel [q]="q" /> }
   </div>`
 })
 export class QuestionCardComponent {
   @Input({ required: true }) q!: Question;
   @Output() delete = new EventEmitter<Question>();
   open = signal(false);
+  ai = signal(false);
 }

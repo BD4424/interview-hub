@@ -7,6 +7,7 @@ import com.prephub.common.NotFoundException;
 import com.prephub.common.TextNormalizer;
 import com.prephub.company.CompanyService;
 import com.prephub.importer.ImportDtos.*;
+import com.prephub.importer.parser.*;
 import com.prephub.question.QuestionDtos;
 import com.prephub.question.QuestionDtos.CompanyAttributionRequest;
 import com.prephub.question.QuestionRepository;
@@ -27,8 +28,6 @@ import java.util.stream.Collectors;
 
 @Service
 public class ImportService {
-    static final Set<String> SUPPORTED = Set.of("csv");
-
     private final ImportJobRepository jobs;
     private final ImportCandidateRepository candidates;
     private final ImportProcessor processor;
@@ -37,13 +36,15 @@ public class ImportService {
     private final CompanyService companies;
     private final TopicService topics;
     private final TagService tags;
+    private final ParserRegistry parsers;
     private final TransactionTemplate tx;
 
     public ImportService(ImportJobRepository jobs, ImportCandidateRepository candidates, ImportProcessor processor,
                          QuestionRepository questions, QuestionWriter writer, CompanyService companies,
-                         TopicService topics, TagService tags, TransactionTemplate tx) {
+                         TopicService topics, TagService tags, ParserRegistry parsers, TransactionTemplate tx) {
         this.jobs = jobs; this.candidates = candidates; this.processor = processor; this.questions = questions;
-        this.writer = writer; this.companies = companies; this.topics = topics; this.tags = tags; this.tx = tx;
+        this.writer = writer; this.companies = companies; this.topics = topics; this.tags = tags;
+        this.parsers = parsers; this.tx = tx;
     }
 
     // ------------------------------------------------------------------ upload
@@ -55,14 +56,38 @@ public class ImportService {
         }
     }
 
-    /** Validates and stores the job; processing runs asynchronously (or synchronously when async=false, e.g. tests). */
-    public ImportJobDto start(Upload upload, AttributionMode mode, Long defaultCompanyId, Long defaultTopicId,
-                              List<String> extraTags, boolean async) {
+    /**
+     * Synchronous preview: detects the format, extracts candidates and returns headers/mapping (tabular) plus a
+     * sample. Nothing is stored. For tabular files with an unusable mapping, headers are returned with an error so
+     * the user can map columns manually.
+     */
+    public InspectResult inspect(Upload upload, Map<String, String> mapping) {
         if (upload.content() == null || upload.content().length == 0) throw new BadRequestException("File is empty");
         String filename = safeFilename(upload.originalFilename());
-        String ext = extension(filename);
-        if (!SUPPORTED.contains(ext)) throw new BadRequestException("Unsupported file type '." + ext + "'. Supported now: " + SUPPORTED);
-        if (looksBinary(upload.content())) throw new BadRequestException("File does not look like a text CSV");
+        String format = parsers.detect(filename, upload.content());
+        QuestionFileParser p = parsers.get(format);
+        try {
+            ParsedFile pf = p.parse(upload.content(), mapping == null ? Map.of() : mapping);
+            List<CandidatePreview> sample = pf.candidates().stream().limit(10).map(c -> new CandidatePreview(c.sourceReference(),
+                    c.question(), c.answer() != null, c.topic(), c.tags(), c.companies(), c.difficulty())).toList();
+            return new InspectResult(filename, format, p.tabular(), pf.headers(), pf.appliedMapping(),
+                    p.tabular() ? TabularMapper.FIELDS : List.of(), pf.candidates().size(), sample, pf.notes(), null);
+        } catch (MappingException e) {
+            return new InspectResult(filename, format, true, e.getHeaders(), e.getMapping(), TabularMapper.FIELDS, 0, List.of(), List.of(), e.getMessage());
+        }
+    }
+
+    public ImportJobDto start(Upload upload, AttributionMode mode, Long defaultCompanyId, Long defaultTopicId,
+                              List<String> extraTags, boolean async) {
+        return start(upload, mode, defaultCompanyId, defaultTopicId, extraTags, Map.of(), async);
+    }
+
+    /** Validates and stores the job; processing runs asynchronously (or synchronously when async=false, e.g. tests). */
+    public ImportJobDto start(Upload upload, AttributionMode mode, Long defaultCompanyId, Long defaultTopicId,
+                              List<String> extraTags, Map<String, String> mapping, boolean async) {
+        if (upload.content() == null || upload.content().length == 0) throw new BadRequestException("File is empty");
+        String filename = safeFilename(upload.originalFilename());
+        String format = parsers.detect(filename, upload.content());
         AttributionMode m = mode == null ? AttributionMode.NONE : mode;
         if (m == AttributionMode.SINGLE_COMPANY && defaultCompanyId == null)
             throw new BadRequestException("Select a company for single-company attribution");
@@ -73,7 +98,7 @@ public class ImportService {
             ImportJob j = new ImportJob();
             j.setFilename(filename);
             j.setFileHash(TextNormalizer.sha256(upload.content()));
-            j.setFormat(ext);
+            j.setFormat(format);
             j.setAttributionMode(m);
             j.setDefaultCompanyId(m == AttributionMode.NONE ? null : defaultCompanyId);
             j.setDefaultTopicId(defaultTopicId);
@@ -81,7 +106,9 @@ public class ImportService {
             return jobs.save(j).getId();
         });
         List<String> extra = extraTags == null ? List.of() : extraTags;
-        if (async) processor.processAsync(jobId, upload.content(), extra); else processor.process(jobId, upload.content(), extra);
+        Map<String, String> map = mapping == null ? Map.of() : mapping;
+        if (async) processor.processAsync(jobId, upload.content(), extra, map);
+        else processor.process(jobId, upload.content(), extra, map);
         return get(jobId);
     }
 
@@ -91,17 +118,6 @@ public class ImportService {
         base = base.substring(base.lastIndexOf('/') + 1).replaceAll("[^A-Za-z0-9._ -]", "_");
         if (base.length() > 200) base = base.substring(base.length() - 200);
         return base.isBlank() ? "upload.csv" : base;
-    }
-
-    static String extension(String filename) {
-        int i = filename.lastIndexOf('.');
-        return i < 0 ? "" : filename.substring(i + 1).toLowerCase(Locale.ROOT);
-    }
-
-    static boolean looksBinary(byte[] b) {
-        int n = Math.min(b.length, 4096);
-        for (int i = 0; i < n; i++) if (b[i] == 0) return true;
-        return false;
     }
 
     // ------------------------------------------------------------------ read
@@ -117,10 +133,11 @@ public class ImportService {
     private ImportJobDto toDto(ImportJob j) {
         String defaultCompany = j.getDefaultCompanyId() == null ? null : companies.get(j.getDefaultCompanyId()).getName();
         List<ImportCandidate> cs = candidates.findByJobIdOrderByIdAsc(j.getId());
+        List<String> notes = j.getParseNotes() == null ? List.of() : List.of(j.getParseNotes().split("\n"));
         return new ImportJobDto(j.getId(), j.getFilename(), j.getFormat(), j.getStatus(), j.getAttributionMode(),
                 j.getDefaultCompanyId(), defaultCompany, j.getDefaultTopicId(),
                 CompanyAttributionResolver.describe(j.getAttributionMode(), defaultCompany),
-                j.getCreatedAt(), j.getCompletedAt(), j.getErrorMessage(),
+                j.getCreatedAt(), j.getCompletedAt(), j.getErrorMessage(), notes,
                 jobs.findByFileHashAndIdNot(j.getFileHash(), j.getId()).stream().map(ImportJob::getId).toList(),
                 report(cs));
     }
@@ -157,7 +174,6 @@ public class ImportService {
 
     @Transactional(readOnly = true)
     public List<CandidateDto> candidates(Long jobId, ReviewStatus status) {
-        job(jobId);
         Long defaultTopic = job(jobId).getDefaultTopicId();
         return candidates.findByJobIdOrderByIdAsc(jobId).stream()
                 .filter(c -> status == null || c.getReviewStatus() == status)
@@ -232,7 +248,10 @@ public class ImportService {
                 c.getJobLevel(), null, provenance(j, c), AttributionStatus.REPORTED, null)).toList();
     }
 
-    private static String provenance(ImportJob j, ImportCandidate c) { return "import #" + j.getId() + " " + j.getFilename() + " " + c.getSourceReference(); }
+    private static String provenance(ImportJob j, ImportCandidate c) {
+        String p = "import #" + j.getId() + " " + j.getFilename() + " " + c.getSourceReference();
+        return p.length() <= 500 ? p : p.substring(0, 500);
+    }
 
     private void mergeCandidate(ImportJob j, ImportCandidate c, Long targetId, boolean full) {
         var r = full
@@ -287,8 +306,8 @@ public class ImportService {
         c.setRawQuestion(TextNormalizer.cleanDisplayKeepLines(r.question()));
         c.setProposedAnswer(r.answer() == null || r.answer().isBlank() ? null : r.answer().trim());
         c.setProposedTopic(TextNormalizer.cleanDisplay(r.topic()));
-        c.setProposedTags(ImportCandidate.join(CsvQuestionParser.split(String.join(",", r.tags() == null ? List.of() : r.tags()), ",")));
-        c.setProposedCompanies(ImportCandidate.join(CsvQuestionParser.split(String.join(";", r.companies() == null ? List.of() : r.companies()), ";")));
+        c.setProposedTags(ImportCandidate.join(TabularMapper.split(String.join(",", r.tags() == null ? List.of() : r.tags()), ",")));
+        c.setProposedCompanies(ImportCandidate.join(TabularMapper.split(String.join(";", r.companies() == null ? List.of() : r.companies()), ";")));
         c.setProposedDifficulty(TextNormalizer.cleanDisplay(r.difficulty()));
         c.setProposedType(TextNormalizer.cleanDisplay(r.questionType()));
         c.setInterviewRound(TextNormalizer.cleanDisplay(r.interviewRound()));
@@ -305,7 +324,7 @@ public class ImportService {
         return c;
     }
 
-    /** Invalid and rejected rows in the same CSV layout so they can be fixed and re-imported. */
+    /** Invalid and rejected rows in CSV import layout so they can be fixed and re-imported (from any source format). */
     @Transactional(readOnly = true)
     public byte[] failedRowsCsv(Long jobId) {
         job(jobId);

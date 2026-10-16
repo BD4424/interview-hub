@@ -16,6 +16,7 @@ import { Dashboard } from '../core/models';
       <div class="card"><div class="muted">With answers</div><div class="stat">{{ d.answered }}</div></div>
       <div class="card"><div class="muted">Without answers</div><div class="stat">{{ d.unanswered }}</div></div>
       <div class="card"><div class="muted">Pending duplicate reviews</div><div class="stat">{{ d.pendingDuplicateReviews }}</div></div>
+      <a class="card" routerLink="/review"><div class="muted">AI questions awaiting review</div><div class="stat">{{ d.pendingAiReviews }}</div></a>
     </div>
     <div class="grid">
       <div class="card"><h2>By topic</h2>

@@ -29,7 +29,8 @@ export class AppComponent {
   links = [
     { path: '/dashboard', label: 'Dashboard' }, { path: '/questions', label: 'Question Bank' },
     { path: '/companies', label: 'Companies' }, { path: '/topics-tags', label: 'Topics & Tags' },
-    { path: '/import', label: 'Import Questions' }, { path: '/interview', label: 'AI Interview' },
-    { path: '/bookmarks', label: 'Bookmarks' }, { path: '/progress', label: 'Progress' }, { path: '/settings', label: 'Settings' }
+    { path: '/import', label: 'Import Questions' }, { path: '/review', label: 'AI Review' },
+    { path: '/interview', label: 'AI Interview' }, { path: '/bookmarks', label: 'Bookmarks' },
+    { path: '/progress', label: 'Progress' }, { path: '/settings', label: 'Settings' }
   ];
 }

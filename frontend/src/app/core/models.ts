@@ -3,6 +3,7 @@ export type QuestionType = 'CONCEPTUAL' | 'CODING' | 'SCENARIO_BASED' | 'DEBUGGI
 export type AttributionMode = 'NONE' | 'SINGLE_COMPANY' | 'PER_ROW';
 export type ReviewStatus = 'PENDING' | 'NEEDS_REVIEW' | 'AUTO_SKIPPED' | 'IMPORTED' | 'MERGED' | 'REJECTED' | 'INVALID';
 export type ReviewAction = 'APPROVE' | 'REJECT' | 'MERGE' | 'ADD_COMPANY' | 'KEEP_SEPARATE';
+export type ApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 export const DIFFICULTIES: Difficulty[] = ['BEGINNER', 'INTERMEDIATE', 'ADVANCED'];
 export const QUESTION_TYPES: QuestionType[] = ['CONCEPTUAL', 'CODING', 'SCENARIO_BASED', 'DEBUGGING', 'SYSTEM_DESIGN'];
 
@@ -20,7 +21,7 @@ export interface CompanyAttribution {
 export interface Question {
   id: number; questionText: string; answerText?: string; topicId: number; topicName: string; tags: { id: number; name: string }[];
   difficulty?: Difficulty; questionType?: QuestionType; answerStatus: string; sourceType: string; sourceReference?: string;
-  notes?: string; approvalStatus: string; companies: CompanyAttribution[]; createdAt: string; updatedAt: string;
+  notes?: string; approvalStatus: ApprovalStatus; companies: CompanyAttribution[]; createdAt: string; updatedAt: string;
 }
 export interface QuestionRequest {
   questionText: string; answerText?: string | null; topicId: number; tags: string[]; difficulty?: Difficulty | null;
@@ -37,7 +38,12 @@ export interface ImportReport {
 export interface ImportJob {
   id: number; filename: string; format: string; status: 'PROCESSING' | 'READY_FOR_REVIEW' | 'COMPLETED' | 'FAILED';
   attributionMode: AttributionMode; defaultCompanyName?: string; attributionPolicy: string; errorMessage?: string;
-  previousImportsOfSameFile: number[]; report: ImportReport; createdAt: string;
+  parseNotes: string[]; previousImportsOfSameFile: number[]; report: ImportReport; createdAt: string;
+}
+export interface CandidatePreview { reference: string; question: string; hasAnswer: boolean; topic?: string; tags: string[]; companies: string[]; difficulty?: string; }
+export interface InspectResult {
+  filename: string; format: string; tabular: boolean; headers: string[]; mapping: Record<string, string>; fields: string[];
+  candidateCount: number; sample: CandidatePreview[]; notes: string[]; error?: string | null;
 }
 export interface Candidate {
   id: number; sourceReference: string; question: string; answer?: string; topic?: string; tags: string[]; companies: string[];
@@ -47,9 +53,32 @@ export interface Candidate {
 }
 export interface Dashboard {
   totalApproved: number; answered: number; unanswered: number; byTopic: Bucket[]; byCompany: Bucket[];
-  pendingDuplicateReviews: number; recentImports: { id: number; filename: string; status: string; total: number; imported: number; createdAt: string }[];
+  pendingDuplicateReviews: number; pendingAiReviews: number;
+  recentImports: { id: number; filename: string; status: string; total: number; imported: number; createdAt: string }[];
 }
 export interface CompanySummary {
   company: Company; totalQuestions: number; answered: number; unanswered: number;
   byTopic: Bucket[]; byDifficulty: Bucket[]; byRound: Bucket[]; byTag: Bucket[];
 }
+
+// ---- AI (milestone 9)
+export type FollowUpMode = 'SESSION_ONLY' | 'REVIEW';
+export type Persistence = 'SESSION_ONLY' | 'REVIEW_ELIGIBLE' | 'LINK_EXISTING';
+export interface GenerateFollowUpsRequest {
+  count?: number; mode?: FollowUpMode; companyId?: number | null; role?: string | null; interviewRound?: string | null;
+  previousAnswer?: string | null; sessionQuestions?: string[];
+}
+export interface DuplicateInfo { matchType: string; matchingQuestionId: number; matchingText: string; matchingApproval: ApprovalStatus; similarity?: number; }
+export interface FollowUpItem {
+  parentQuestionId: number; question: string; expectedAnswerPoints: string[]; difficulty?: Difficulty;
+  existingTags: string[]; suggestedNewTags: string[]; reason: string; persistence: Persistence; duplicate?: DuplicateInfo | null;
+}
+export interface FollowUpBatch { parentQuestionId: number; model: string; companyContext?: string | null; disclaimer: string; items: FollowUpItem[]; rejected: string[]; }
+export interface SaveFollowUpResult { status: 'CREATED_PENDING_REVIEW' | 'LINKED_EXISTING'; questionId: number; approvalStatus: ApprovalStatus; message: string; }
+export interface LinkedFollowUp { questionId: number; question: string; approvalStatus: ApprovalStatus; difficulty?: string; sequence?: number; }
+export interface DraftAnswer { questionId: number; model: string; draft: string; note: string; }
+export interface Settings {
+  ai: { enabled: boolean; provider?: string; model?: string; status: string };
+  imports: { formats: string[]; maxUploadMb: number; companyDelimiter: string; tagDelimiter: string };
+}
+export const SUGGESTED_TAGS_PREFIX = 'Suggested new tags (not applied): ';

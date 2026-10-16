@@ -10,6 +10,7 @@ export class ApiService {
   private base = environment.apiBase;
 
   dashboard() { return this.http.get<M.Dashboard>(`${this.base}/dashboard`); }
+  settings() { return this.http.get<M.Settings>(`${this.base}/settings`); }
 
   topics() { return this.http.get<M.Topic[]>(`${this.base}/topics`); }
   createTopic(name: string, description?: string) { return this.http.post<M.Topic>(`${this.base}/topics`, { name, description }); }
@@ -38,9 +39,19 @@ export class ApiService {
   updateQuestion(id: number, r: M.QuestionRequest) { return this.http.put<M.Question>(`${this.base}/questions/${id}`, r); }
   deleteQuestion(id: number) { return this.http.delete<void>(`${this.base}/questions/${id}`); }
 
-  startImport(file: File, mode: M.AttributionMode, defaultCompanyId?: number | null, defaultTopicId?: number | null, tags?: string) {
+  // ---- imports
+  private importForm(file: File, mapping?: Record<string, string> | null) {
     const fd = new FormData();
     fd.append('file', file);
+    if (mapping && Object.keys(mapping).length) fd.append('columnMapping', JSON.stringify(mapping));
+    return fd;
+  }
+  inspectImport(file: File, mapping?: Record<string, string> | null) {
+    return this.http.post<M.InspectResult>(`${this.base}/imports/inspect`, this.importForm(file, mapping));
+  }
+  startImport(file: File, mode: M.AttributionMode, defaultCompanyId?: number | null, defaultTopicId?: number | null,
+              tags?: string, mapping?: Record<string, string> | null) {
+    const fd = this.importForm(file, mapping);
     fd.append('attributionMode', mode);
     if (defaultCompanyId) fd.append('defaultCompanyId', String(defaultCompanyId));
     if (defaultTopicId) fd.append('defaultTopicId', String(defaultTopicId));
@@ -55,15 +66,32 @@ export class ApiService {
   }
   editCandidate(id: number, cid: number, body: any) { return this.http.put<M.Candidate>(`${this.base}/imports/${id}/candidates/${cid}`, body); }
   failedRowsUrl(id: number) { return `${this.base}/imports/${id}/failed-rows.csv`; }
+
+  // ---- AI
+  generateFollowUps(questionId: number, r: M.GenerateFollowUpsRequest) {
+    return this.http.post<M.FollowUpBatch>(`${this.base}/questions/${questionId}/follow-ups/generate`, r);
+  }
+  saveFollowUp(questionId: number, item: M.FollowUpItem) {
+    return this.http.post<M.SaveFollowUpResult>(`${this.base}/questions/${questionId}/follow-ups`, {
+      question: item.question, expectedAnswerPoints: item.expectedAnswerPoints, difficulty: item.difficulty ?? null,
+      tags: [...item.existingTags, ...item.suggestedNewTags], reason: item.reason
+    });
+  }
+  followUps(questionId: number) { return this.http.get<M.LinkedFollowUp[]>(`${this.base}/questions/${questionId}/follow-ups`); }
+  draftAnswer(questionId: number) { return this.http.post<M.DraftAnswer>(`${this.base}/questions/${questionId}/answer/generate`, {}); }
+  decide(questionId: number, decision: 'APPROVE' | 'REJECT', applyTags: string[] = []) {
+    return this.http.post<M.Question | null>(`${this.base}/questions/${questionId}/approval`, { decision, applyTags });
+  }
 }
 
 export function errorMessage(e: unknown): string {
   if (e instanceof HttpErrorResponse) {
     const body = e.error as M.ApiError | null;
     if (body?.message) {
-      const fields = body.details && body.code === 'VALIDATION_FAILED'
-        ? ' — ' + Object.entries(body.details).map(([k, v]) => `${k}: ${v}`).join('; ') : '';
-      return body.message + fields;
+      let extra = '';
+      if (body.code === 'VALIDATION_FAILED' && body.details) extra = ' — ' + Object.entries(body.details).map(([k, v]) => `${k}: ${v}`).join('; ');
+      if (body.code === 'AI_INVALID_OUTPUT' && body.details?.['problems']) extra = ' — ' + (body.details['problems'] as string[]).join('; ');
+      return body.message + extra;
     }
     return e.status === 0 ? 'Cannot reach the server. Is the backend running on :8080?' : `Request failed (${e.status})`;
   }

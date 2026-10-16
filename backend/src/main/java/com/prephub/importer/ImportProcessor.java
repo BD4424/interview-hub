@@ -4,6 +4,9 @@ import com.prephub.common.Enums;
 import com.prephub.common.Enums.*;
 import com.prephub.common.TextNormalizer;
 import com.prephub.company.CompanyRepository;
+import com.prephub.importer.parser.ParsedFile;
+import com.prephub.importer.parser.ParserRegistry;
+import com.prephub.importer.parser.TabularMapper;
 import com.prephub.question.Question;
 import com.prephub.question.QuestionRepository;
 import org.slf4j.Logger;
@@ -16,7 +19,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.Instant;
 import java.util.*;
 
-/** Parses a file into candidates and classifies each one. Never writes to the question bank. */
+/** Parses a file (any supported format) into candidates and classifies each one. Never writes to the question bank. */
 @Component
 public class ImportProcessor {
     private static final Logger log = LoggerFactory.getLogger(ImportProcessor.class);
@@ -27,20 +30,24 @@ public class ImportProcessor {
     private final QuestionRepository questions;
     private final CompanyRepository companies;
     private final SemanticDuplicateDetector semantic;
+    private final ParserRegistry parsers;
     private final TransactionTemplate tx;
 
     public ImportProcessor(ImportJobRepository jobs, ImportCandidateRepository candidates, QuestionRepository questions,
-                           CompanyRepository companies, SemanticDuplicateDetector semantic, TransactionTemplate tx) {
+                           CompanyRepository companies, SemanticDuplicateDetector semantic, ParserRegistry parsers,
+                           TransactionTemplate tx) {
         this.jobs = jobs; this.candidates = candidates; this.questions = questions; this.companies = companies;
-        this.semantic = semantic; this.tx = tx;
+        this.semantic = semantic; this.parsers = parsers; this.tx = tx;
     }
 
     @Async
-    public void processAsync(Long jobId, byte[] content, List<String> extraTags) { process(jobId, content, extraTags); }
+    public void processAsync(Long jobId, byte[] content, List<String> extraTags, Map<String, String> mapping) {
+        process(jobId, content, extraTags, mapping);
+    }
 
-    public void process(Long jobId, byte[] content, List<String> extraTags) {
+    public void process(Long jobId, byte[] content, List<String> extraTags, Map<String, String> mapping) {
         try {
-            tx.executeWithoutResult(s -> doProcess(jobId, content, extraTags));
+            tx.executeWithoutResult(s -> doProcess(jobId, content, extraTags, mapping));
         } catch (RuntimeException e) {
             log.warn("Import job {} failed: {}", jobId, e.getClass().getSimpleName());
             tx.executeWithoutResult(s -> {
@@ -52,14 +59,14 @@ public class ImportProcessor {
         }
     }
 
-    private void doProcess(Long jobId, byte[] content, List<String> extraTags) {
+    private void doProcess(Long jobId, byte[] content, List<String> extraTags, Map<String, String> mapping) {
         ImportJob job = jobs.findById(jobId).orElseThrow();
         String defaultCompany = job.getDefaultCompanyId() == null ? null
                 : companies.findById(job.getDefaultCompanyId()).map(c -> c.getName()).orElse(null);
-        CsvQuestionParser.ParseResult parsed = new CsvQuestionParser().parse(content);
+        ParsedFile parsed = parsers.get(job.getFormat()).parse(content, mapping == null ? Map.of() : mapping);
         List<QuestionCandidate> rows = parsed.candidates();
+        job.setParseNotes(String.join("\n", parsed.notes()));
 
-        // batch-load existing questions for every fingerprint in the file
         Set<String> fps = new HashSet<>();
         rows.forEach(r -> { String f = TextNormalizer.fingerprint(r.question()); if (f != null) fps.add(f); });
         Map<String, Question> existing = new HashMap<>();
@@ -69,19 +76,19 @@ public class ImportProcessor {
         for (QuestionCandidate r : rows) {
             ImportCandidate c = new ImportCandidate();
             c.setJob(job);
-            c.setSourceReference(r.sourceReference());
+            c.setSourceReference(truncate(r.sourceReference(), 100));
             c.setRawQuestion(r.question());
             c.setProposedAnswer(r.answer());
-            c.setProposedTopic(r.topic());
+            c.setProposedTopic(truncate(r.topic(), 120));
             List<String> tags = new ArrayList<>(r.tags());
             if (extraTags != null) tags.addAll(extraTags);
-            c.setProposedTags(ImportCandidate.join(CsvQuestionParser.split(String.join(",", tags), ",")));
+            c.setProposedTags(ImportCandidate.join(TabularMapper.split(String.join(",", tags), ",")));
             c.setProposedCompanies(ImportCandidate.join(CompanyAttributionResolver.resolve(job.getAttributionMode(), defaultCompany, r.companies())));
-            c.setProposedDifficulty(r.difficulty());
-            c.setProposedType(r.questionType());
-            c.setInterviewRound(r.interviewRound());
-            c.setRole(r.role());
-            c.setJobLevel(r.jobLevel());
+            c.setProposedDifficulty(truncate(r.difficulty(), 20));
+            c.setProposedType(truncate(r.questionType(), 30));
+            c.setInterviewRound(truncate(r.interviewRound(), 100));
+            c.setRole(truncate(r.role(), 200));
+            c.setJobLevel(truncate(r.jobLevel(), 100));
             classify(c, existing, firstInFile);
             candidates.save(c);
         }
@@ -89,6 +96,8 @@ public class ImportProcessor {
         job.setStatus(ImportStatus.READY_FOR_REVIEW);
         ImportService.refreshCounts(job, candidates.findByJobIdOrderByIdAsc(jobId));
     }
+
+    private static String truncate(String s, int max) { return s == null || s.length() <= max ? s : s.substring(0, max); }
 
     /** Pure classification; package-visible for re-validation after edits. */
     void classify(ImportCandidate c, Map<String, Question> existing, Map<String, String> firstInFile) {
