@@ -67,7 +67,8 @@ public class GlobalExceptionHandler {
             int st = er.getStatusCode().value();
             return ResponseEntity.status(st).body(ApiError.of(st, "HTTP_" + st, er.getBody().getDetail(), null));
         }
-        log.error("Unhandled error: {}", e.getClass().getName());
+        log.error("Unhandled error: {}", e.getClass().getName(), e);
+        log.error("Error msg: {}",e.getMessage());
         return ResponseEntity.status(500).body(ApiError.of(500, "INTERNAL_ERROR", "Unexpected error", null));
     }
 }

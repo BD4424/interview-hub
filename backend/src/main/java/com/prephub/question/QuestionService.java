@@ -38,20 +38,31 @@ public class QuestionService {
 
     public QuestionDto update(Long id, QuestionRequest r) {
         String fp = TextNormalizer.fingerprint(r.questionText());
-        repo.findByFingerprint(fp).filter(e -> !e.getId().equals(id))
-                .ifPresent(e -> { throw new DuplicateQuestionException(e.getId(), e.getQuestionText()); });
+
+        repo.findByFingerprint(fp)
+                .filter(e -> !e.getId().equals(id))
+                .ifPresent(e -> {
+                    throw new DuplicateQuestionException(
+                            e.getId(), e.getQuestionText());
+                });
+
         try {
-            writer.update(id, r);
+            return writer.update(id, r);
         } catch (DataIntegrityViolationException e) {
-            Question existing = repo.findByFingerprint(fp).orElseThrow(() -> e);
-            throw new DuplicateQuestionException(existing.getId(), existing.getQuestionText());
+            Question existing = repo.findByFingerprint(fp)
+                    .orElseThrow(() -> e);
+
+            throw new DuplicateQuestionException(
+                    existing.getId(), existing.getQuestionText());
         }
-        return get(id);
     }
 
     @Transactional(readOnly = true)
     public QuestionDto get(Long id) {
-        return QuestionDtos.toDto(repo.findById(id).orElseThrow(() -> new NotFoundException("Question", id)));
+        Question q = repo.findById(id)
+                .orElseThrow(() -> new NotFoundException("Question", id));
+
+        return QuestionDtos.toDto(q);
     }
 
     @Transactional(readOnly = true)

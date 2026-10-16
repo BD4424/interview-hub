@@ -58,10 +58,13 @@ public class QuestionWriter {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public Question update(Long id, QuestionDtos.QuestionRequest r) {
+    public QuestionDtos.QuestionDto update(Long id, QuestionDtos.QuestionRequest r) {
         Question q = repo.findById(id).orElseThrow(() -> new NotFoundException("Question", id));
+
         String canonical = TextNormalizer.canonicalQuestion(r.questionText());
+
         if (canonical == null) throw new BadRequestException("Question text is required");
+
         q.setQuestionText(TextNormalizer.cleanDisplayKeepLines(r.questionText()));
         q.setCanonicalText(canonical);
         q.setFingerprint(TextNormalizer.sha256(canonical));
@@ -74,7 +77,10 @@ public class QuestionWriter {
         q.getTags().clear();
         q.getTags().addAll(tags.resolveOrCreate(r.tags()));
         syncCompanies(q, r.companies(), true);
-        return repo.saveAndFlush(q);
+
+        repo.saveAndFlush(q);
+
+        return QuestionDtos.toDto(q);
     }
 
     private static void applyAnswer(Question q, String answer, AnswerStatus requested) {

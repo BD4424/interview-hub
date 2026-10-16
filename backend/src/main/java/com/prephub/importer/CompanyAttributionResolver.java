@@ -6,13 +6,14 @@ import java.util.List;
 
 /**
  * Precedence rules (spec 8.C):
- *  NONE           -> never attribute, even if the file has a company column.
- *  SINGLE_COMPANY -> explicit row value overrides; otherwise the file default.
- *  PER_ROW        -> row value; otherwise the file default if one was chosen; otherwise unknown.
+ * NONE           -> never attribute, even if the file has a company column.
+ * SINGLE_COMPANY -> explicit row value overrides; otherwise the file default.
+ * PER_ROW        -> row value; otherwise the file default if one was chosen; otherwise unknown.
  * Never infers companies from question text.
  */
 public final class CompanyAttributionResolver {
-    private CompanyAttributionResolver() {}
+    private CompanyAttributionResolver() {
+    }
 
     public static List<String> resolve(AttributionMode mode, String defaultCompanyName, List<String> rowCompanies) {
         if (mode == null || mode == AttributionMode.NONE) return List.of();
