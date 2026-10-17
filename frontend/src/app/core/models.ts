@@ -30,6 +30,7 @@ export interface QuestionRequest {
 }
 export interface ApiError { status: number; code: string; message: string; details: Record<string, any>; }
 
+// ---- import
 export interface ImportReport {
   totalExtracted: number; imported: number; merged: number; exactDuplicatesSkipped: number; duplicatesInFile: number;
   needsReview: number; pendingApproval: number; invalid: number; rejected: number; withoutAnswer: number; withoutCompany: number;
@@ -51,17 +52,56 @@ export interface Candidate {
   matchType: string; reviewStatus: ReviewStatus; reason?: string; matchedQuestionId?: number; similarityScore?: number;
   matchedQuestion?: Question; createdQuestionId?: number; warnings: string[];
 }
+
+// ---- practice & progress (M11-12)
+export type SessionType = 'TOPIC' | 'COMPANY' | 'TAG' | 'RANDOM' | 'MOCK' | 'REVISION' | 'SINGLE';
+export type TurnStatus = 'ASKED' | 'AWAITING_SELF_SCORE' | 'EVALUATED' | 'SKIPPED';
+export type Confidence = 'LOW' | 'MEDIUM' | 'HIGH';
+export interface Rubric { technicalCorrectness?: number; conceptualUnderstanding?: number; completeness?: number;
+  practicalApplication?: number; edgeCasesAndTradeoffs?: number; clarity?: number; }
+export interface Evaluation {
+  score: number; rubric?: Rubric | null; summary?: string; correctPoints: string[]; missedPoints: string[];
+  incorrectStatements: string[]; improvedAnswer: string; revisionTopics: string[];
+  followUpQuestion?: { question: string; expectedAnswerPoints: string[] } | null; model: string;
+}
+export interface Turn {
+  id: number; turnNumber: number; type: 'BANK' | 'FOLLOW_UP'; status: TurnStatus; questionId?: number; question: string;
+  topic?: string; difficulty?: Difficulty; tags: string[]; companies: string[]; sessionOnly: boolean; parentTurnId?: number;
+  userAnswer?: string; confidence?: Confidence; score?: number; evaluation?: Evaluation | null; referenceAnswer?: string | null;
+  expectedPoints: string[]; followUpAvailable: boolean; askedAt?: string; answeredAt?: string;
+}
+export interface Session {
+  id: number; type: SessionType; status: 'ACTIVE' | 'COMPLETED'; title: string; topic?: string; company?: string; tags: string[];
+  difficulty?: Difficulty; questionLimit: number; bankQuestionsAsked: number; startedAt: string; completedAt?: string;
+  overallScore?: number; aiEnabled: boolean; currentTurnId?: number; turns: Turn[]; message?: string;
+}
+export interface StartSessionRequest {
+  type: SessionType; topicId?: number | null; companyId?: number | null; tagIds?: number[]; difficulty?: Difficulty | null;
+  questionLimit?: number | null; questionId?: number | null;
+}
+export interface SessionSummary { id: number; type: SessionType; status: string; title: string; answered: number; overallScore?: number; startedAt: string; completedAt?: string; }
+export interface QuestionStatus { questionId: number; bookmarked: boolean; attempts: number; lastScore?: number; bestScore?: number; lastAttemptAt?: string; dueForRevision: boolean; }
+export interface Attempt { id: number; sessionId?: number; userAnswer?: string; score?: number; confidence?: Confidence; evaluation?: Evaluation | null; attemptedAt: string; }
+export interface Bookmark { questionId: number; notes?: string; createdAt: string; question: Question; }
+export interface TopicProgress { topic: string; attempts: number; questionsAttempted: number; totalQuestions: number; averageScore?: number; }
+export interface DayProgress { date: string; attempts: number; averageScore?: number; }
+export interface ProgressSummary { totalAttempts: number; questionsAttempted: number; averageScore30d?: number; streakDays: number;
+  todayAttempts: number; dueForRevision: number; bookmarks: number; sessionsCompleted: number; }
+export interface Progress { summary: ProgressSummary; last30Days: DayProgress[]; topics: TopicProgress[]; weakTopics: TopicProgress[];
+  recentSessions: SessionSummary[]; recentAttempts: { questionId: number; question: string; topic: string; score?: number; at: string }[]; }
+
 export interface Dashboard {
   totalApproved: number; answered: number; unanswered: number; byTopic: Bucket[]; byCompany: Bucket[];
   pendingDuplicateReviews: number; pendingAiReviews: number;
   recentImports: { id: number; filename: string; status: string; total: number; imported: number; createdAt: string }[];
+  practice: ProgressSummary; weakTopics: TopicProgress[]; recentSessions: SessionSummary[]; last14Days: DayProgress[];
 }
 export interface CompanySummary {
-  company: Company; totalQuestions: number; answered: number; unanswered: number;
+  company: Company; totalQuestions: number; answered: number; unanswered: number; bookmarked: number; practiced: number;
   byTopic: Bucket[]; byDifficulty: Bucket[]; byRound: Bucket[]; byTag: Bucket[];
 }
 
-// ---- AI (milestone 9)
+// ---- AI (M9)
 export type FollowUpMode = 'SESSION_ONLY' | 'REVIEW';
 export type Persistence = 'SESSION_ONLY' | 'REVIEW_ELIGIBLE' | 'LINK_EXISTING';
 export interface GenerateFollowUpsRequest {
@@ -77,8 +117,18 @@ export interface FollowUpBatch { parentQuestionId: number; model: string; compan
 export interface SaveFollowUpResult { status: 'CREATED_PENDING_REVIEW' | 'LINKED_EXISTING'; questionId: number; approvalStatus: ApprovalStatus; message: string; }
 export interface LinkedFollowUp { questionId: number; question: string; approvalStatus: ApprovalStatus; difficulty?: string; sequence?: number; }
 export interface DraftAnswer { questionId: number; model: string; draft: string; note: string; }
+
+// ---- semantic duplicates (M10) & settings
+export interface DedupMatch { questionId: number; questionText: string; topic: string; approvalStatus: string; score: number; classification: string; }
+export interface DedupCheck { exact?: DedupMatch | null; similar: DedupMatch[]; semanticEnabled: boolean; likelyThreshold: number; possibleThreshold: number; note?: string | null; }
+export interface IndexStatus { enabled: boolean; model?: string; totalQuestions: number; indexed: number; pending: number; lastError?: string; lastRun?: string; message: string; }
+export interface Calibration { likelyThreshold: number; possibleThreshold: number; sampled: number;
+  closestPairs: { a: DedupMatch; b: DedupMatch; score: number }[]; nearestNeighbourScores: { range: string; questions: number }[]; guidance: string; }
 export interface Settings {
   ai: { enabled: boolean; provider?: string; model?: string; status: string };
+  semantic: { enabled: boolean; model?: string; likelyThreshold: number; possibleThreshold: number; index: IndexStatus };
   imports: { formats: string[]; maxUploadMb: number; companyDelimiter: string; tagDelimiter: string };
+  timezone: string;
 }
+export interface ConnectionTest { chatOk: boolean; chatMessage: string; embeddingsOk: boolean; embeddingsMessage: string; }
 export const SUGGESTED_TAGS_PREFIX = 'Suggested new tags (not applied): ';

@@ -15,13 +15,9 @@ spring:
     multipart:
       max-file-size: 10MB
       max-request-size: 10MB
-#prephub:
-#  cors:
-#    allowed-origins: ${CORS_ORIGINS:http://localhost:4200}
-#  import:
-#    allowed-extensions: csv
 
 prephub:
+  timezone: ${APP_TIMEZONE:Asia/Kolkata}
   cors:
     allowed-origins: ${CORS_ORIGINS:http://localhost:4200}
   ai:
@@ -31,4 +27,11 @@ prephub:
       api-key: ${OPENAI_API_KEY:}
       base-url: ${OPENAI_BASE_URL:https://api.openai.com}
       model: ${OPENAI_MODEL:gpt-4o-mini}
-      temperature: 0.4
+      embedding-model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}
+      temperature: 0.3
+  dedup:
+    semantic-enabled: ${DEDUP_SEMANTIC_ENABLED:true}
+    likely-threshold: ${DEDUP_LIKELY_THRESHOLD:0.90}
+    possible-threshold: ${DEDUP_POSSIBLE_THRESHOLD:0.82}
+    index-interval-ms: 30000
+    index-initial-delay-ms: 5000

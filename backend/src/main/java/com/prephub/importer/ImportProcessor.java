@@ -19,7 +19,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.Instant;
 import java.util.*;
 
-/** Parses a file (any supported format) into candidates and classifies each one. Never writes to the question bank. */
+/**
+ * Parses a file (any supported format) into candidates and classifies each one:
+ * invalid → exact duplicate (bank) → duplicate within the file → semantic match (embeddings) → new.
+ * Never writes to the question bank.
+ */
 @Component
 public class ImportProcessor {
     private static final Logger log = LoggerFactory.getLogger(ImportProcessor.class);
@@ -47,7 +51,7 @@ public class ImportProcessor {
 
     public void process(Long jobId, byte[] content, List<String> extraTags, Map<String, String> mapping) {
         try {
-            tx.executeWithoutResult(s -> doProcess(jobId, content, extraTags, mapping));
+            doProcess(jobId, content, extraTags, mapping);
         } catch (RuntimeException e) {
             log.warn("Import job {} failed: {}", jobId, e.getClass().getSimpleName());
             tx.executeWithoutResult(s -> {
@@ -60,47 +64,74 @@ public class ImportProcessor {
     }
 
     private void doProcess(Long jobId, byte[] content, List<String> extraTags, Map<String, String> mapping) {
-        ImportJob job = jobs.findById(jobId).orElseThrow();
-        String defaultCompany = job.getDefaultCompanyId() == null ? null
-                : companies.findById(job.getDefaultCompanyId()).map(c -> c.getName()).orElse(null);
-        ParsedFile parsed = parsers.get(job.getFormat()).parse(content, mapping == null ? Map.of() : mapping);
+        // 1. parse (no transaction needed)
+        ImportJob snapshot = tx.execute(s -> jobs.findById(jobId).orElseThrow());
+        ParsedFile parsed = parsers.get(snapshot.getFormat()).parse(content, mapping == null ? Map.of() : mapping);
         List<QuestionCandidate> rows = parsed.candidates();
-        job.setParseNotes(String.join("\n", parsed.notes()));
 
+        // 2. exact matches in the bank (one query)
         Set<String> fps = new HashSet<>();
         rows.forEach(r -> { String f = TextNormalizer.fingerprint(r.question()); if (f != null) fps.add(f); });
-        Map<String, Question> existing = new HashMap<>();
-        if (!fps.isEmpty()) questions.findByFingerprintIn(fps).forEach(q -> existing.put(q.getFingerprint(), q));
+        Set<String> existingFps = new HashSet<>();
+        if (!fps.isEmpty()) tx.executeWithoutResult(s -> questions.findByFingerprintIn(fps).forEach(q -> existingFps.add(q.getFingerprint())));
 
-        Map<String, String> firstInFile = new HashMap<>();
-        for (QuestionCandidate r : rows) {
-            ImportCandidate c = new ImportCandidate();
-            c.setJob(job);
-            c.setSourceReference(truncate(r.sourceReference(), 100));
-            c.setRawQuestion(r.question());
-            c.setProposedAnswer(r.answer());
-            c.setProposedTopic(truncate(r.topic(), 120));
-            List<String> tags = new ArrayList<>(r.tags());
-            if (extraTags != null) tags.addAll(extraTags);
-            c.setProposedTags(ImportCandidate.join(TabularMapper.split(String.join(",", tags), ",")));
-            c.setProposedCompanies(ImportCandidate.join(CompanyAttributionResolver.resolve(job.getAttributionMode(), defaultCompany, r.companies())));
-            c.setProposedDifficulty(truncate(r.difficulty(), 20));
-            c.setProposedType(truncate(r.questionType(), 30));
-            c.setInterviewRound(truncate(r.interviewRound(), 100));
-            c.setRole(truncate(r.role(), 200));
-            c.setJobLevel(truncate(r.jobLevel(), 100));
-            classify(c, existing, firstInFile);
-            candidates.save(c);
+        // 3. semantic matches for rows that are not exact duplicates (batched embedding calls, outside any transaction)
+        List<Integer> semanticRows = new ArrayList<>();
+        List<String> semanticTexts = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (int i = 0; i < rows.size(); i++) {
+            String f = TextNormalizer.fingerprint(rows.get(i).question());
+            if (f == null || existingFps.contains(f) || !seen.add(f)) continue;
+            semanticRows.add(i);
+            semanticTexts.add(rows.get(i).question());
         }
-        job.setTotalRecords(rows.size());
-        job.setStatus(ImportStatus.READY_FOR_REVIEW);
-        ImportService.refreshCounts(job, candidates.findByJobIdOrderByIdAsc(jobId));
+        SemanticDuplicateDetector.BatchResult sem = semantic.findSimilarBatch(semanticTexts, 3);
+        Map<Integer, List<SemanticDuplicateDetector.SemanticMatch>> semByRow = new HashMap<>();
+        for (int k = 0; k < semanticRows.size(); k++) semByRow.put(semanticRows.get(k), sem.matches().get(k));
+
+        List<String> notes = new ArrayList<>(parsed.notes());
+        if (sem.note() != null) notes.add(sem.note());
+
+        // 4. classify and store
+        tx.executeWithoutResult(s -> {
+            ImportJob job = jobs.findById(jobId).orElseThrow();
+            job.setParseNotes(String.join("\n", notes));
+            String defaultCompany = job.getDefaultCompanyId() == null ? null
+                    : companies.findById(job.getDefaultCompanyId()).map(c -> c.getName()).orElse(null);
+            Map<String, Question> existing = new HashMap<>();
+            if (!fps.isEmpty()) questions.findByFingerprintIn(fps).forEach(q -> existing.put(q.getFingerprint(), q));
+            Map<String, String> firstInFile = new HashMap<>();
+            for (int i = 0; i < rows.size(); i++) {
+                QuestionCandidate r = rows.get(i);
+                ImportCandidate c = new ImportCandidate();
+                c.setJob(job);
+                c.setSourceReference(truncate(r.sourceReference(), 100));
+                c.setRawQuestion(r.question());
+                c.setProposedAnswer(r.answer());
+                c.setProposedTopic(truncate(r.topic(), 120));
+                List<String> tags = new ArrayList<>(r.tags());
+                if (extraTags != null) tags.addAll(extraTags);
+                c.setProposedTags(ImportCandidate.join(TabularMapper.split(String.join(",", tags), ",")));
+                c.setProposedCompanies(ImportCandidate.join(CompanyAttributionResolver.resolve(job.getAttributionMode(), defaultCompany, r.companies())));
+                c.setProposedDifficulty(truncate(r.difficulty(), 20));
+                c.setProposedType(truncate(r.questionType(), 30));
+                c.setInterviewRound(truncate(r.interviewRound(), 100));
+                c.setRole(truncate(r.role(), 200));
+                c.setJobLevel(truncate(r.jobLevel(), 100));
+                classify(c, existing, firstInFile, semByRow.getOrDefault(i, List.of()));
+                candidates.save(c);
+            }
+            job.setTotalRecords(rows.size());
+            job.setStatus(ImportStatus.READY_FOR_REVIEW);
+            ImportService.refreshCounts(job, candidates.findByJobIdOrderByIdAsc(jobId));
+        });
     }
 
     private static String truncate(String s, int max) { return s == null || s.length() <= max ? s : s.substring(0, max); }
 
-    /** Pure classification; package-visible for re-validation after edits. */
-    void classify(ImportCandidate c, Map<String, Question> existing, Map<String, String> firstInFile) {
+    /** Pure classification given precomputed exact and semantic matches. */
+    void classify(ImportCandidate c, Map<String, Question> existing, Map<String, String> firstInFile,
+                  List<SemanticDuplicateDetector.SemanticMatch> semanticMatches) {
         c.setMatchedQuestionId(null); c.setSimilarityScore(null); c.setRejectionReason(null);
         String error = validate(c);
         if (error != null) {
@@ -134,13 +165,15 @@ public class ImportProcessor {
                 return;
             }
         }
-        List<SemanticDuplicateDetector.SemanticMatch> sims = semantic.findSimilar(c.getRawQuestion(), 3);
-        if (!sims.isEmpty()) {
-            var best = sims.get(0);
+        if (semanticMatches != null && !semanticMatches.isEmpty()) {
+            var best = semanticMatches.get(0);
             c.setMatchedQuestionId(best.questionId());
             c.setSimilarityScore(best.score());
-            c.setMatchType(best.score() >= 0.92 ? MatchType.LIKELY_SEMANTIC_DUPLICATE : MatchType.POSSIBLE_DUPLICATE);
+            boolean likely = best.score() >= semantic.likelyThreshold();
+            c.setMatchType(likely ? MatchType.LIKELY_SEMANTIC_DUPLICATE : MatchType.POSSIBLE_DUPLICATE);
             c.setReviewStatus(ReviewStatus.NEEDS_REVIEW);
+            c.setRejectionReason((likely ? "Very similar to" : "Possibly similar to") + " question #" + best.questionId()
+                    + " (similarity " + best.score() + "). Merge if it asks the same thing, otherwise keep as a separate question.");
             return;
         }
         c.setMatchType(MatchType.NEW_CANDIDATE);
@@ -177,6 +210,7 @@ public class ImportProcessor {
         return out;
     }
 
+    /** Re-validation after an edit (or after an insert race). Includes the semantic check. */
     @Transactional
     public void reclassify(ImportCandidate c) {
         Map<String, Question> existing = new HashMap<>();
@@ -188,6 +222,7 @@ public class ImportProcessor {
             if (other.getReviewStatus() == ReviewStatus.REJECTED || other.getReviewStatus() == ReviewStatus.INVALID) continue;
             if (other.getId() < c.getId()) firstInFile.putIfAbsent(other.getFingerprint(), other.getSourceReference());
         }
-        classify(c, existing, firstInFile);
+        List<SemanticDuplicateDetector.SemanticMatch> sem = fp == null || existing.containsKey(fp) ? List.of() : semantic.findSimilar(c.getRawQuestion(), 3);
+        classify(c, existing, firstInFile, sem);
     }
 }

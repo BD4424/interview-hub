@@ -11,6 +11,7 @@ export class ApiService {
 
   dashboard() { return this.http.get<M.Dashboard>(`${this.base}/dashboard`); }
   settings() { return this.http.get<M.Settings>(`${this.base}/settings`); }
+  testAi() { return this.http.post<M.ConnectionTest>(`${this.base}/settings/ai/test`, {}); }
 
   topics() { return this.http.get<M.Topic[]>(`${this.base}/topics`); }
   createTopic(name: string, description?: string) { return this.http.post<M.Topic>(`${this.base}/topics`, { name, description }); }
@@ -67,7 +68,7 @@ export class ApiService {
   editCandidate(id: number, cid: number, body: any) { return this.http.put<M.Candidate>(`${this.base}/imports/${id}/candidates/${cid}`, body); }
   failedRowsUrl(id: number) { return `${this.base}/imports/${id}/failed-rows.csv`; }
 
-  // ---- AI
+  // ---- AI follow-ups & review
   generateFollowUps(questionId: number, r: M.GenerateFollowUpsRequest) {
     return this.http.post<M.FollowUpBatch>(`${this.base}/questions/${questionId}/follow-ups/generate`, r);
   }
@@ -82,6 +83,36 @@ export class ApiService {
   decide(questionId: number, decision: 'APPROVE' | 'REJECT', applyTags: string[] = []) {
     return this.http.post<M.Question | null>(`${this.base}/questions/${questionId}/approval`, { decision, applyTags });
   }
+
+  // ---- semantic duplicates
+  checkDuplicate(text: string, excludeQuestionId?: number | null) {
+    return this.http.post<M.DedupCheck>(`${this.base}/dedup/check`, { text, excludeQuestionId: excludeQuestionId ?? null });
+  }
+  indexStatus() { return this.http.get<M.IndexStatus>(`${this.base}/dedup/status`); }
+  reindex(reset = false) { return this.http.post<M.IndexStatus>(`${this.base}/dedup/reindex`, {}, { params: { reset } }); }
+  calibration(pairs = 25) { return this.http.get<M.Calibration>(`${this.base}/dedup/calibration`, { params: { pairs } }); }
+
+  // ---- practice
+  startSession(r: M.StartSessionRequest) { return this.http.post<M.Session>(`${this.base}/interviews`, r); }
+  sessions() { return this.http.get<M.SessionSummary[]>(`${this.base}/interviews`); }
+  session(id: number) { return this.http.get<M.Session>(`${this.base}/interviews/${id}`); }
+  answer(id: number, turnId: number, answer: string, confidence?: M.Confidence | null, selfScore?: number | null) {
+    return this.http.post<M.Session>(`${this.base}/interviews/${id}/answers`, { answer, confidence: confidence ?? null, selfScore: selfScore ?? null }, { params: { turnId } });
+  }
+  selfScore(id: number, turnId: number, score: number) { return this.http.post<M.Session>(`${this.base}/interviews/${id}/turns/${turnId}/self-score`, { score }); }
+  skip(id: number, turnId: number) { return this.http.post<M.Session>(`${this.base}/interviews/${id}/turns/${turnId}/skip`, {}); }
+  sessionFollowUp(id: number, turnId: number) { return this.http.post<M.Session>(`${this.base}/interviews/${id}/turns/${turnId}/follow-up`, {}); }
+  next(id: number) { return this.http.post<M.Session>(`${this.base}/interviews/${id}/next`, {}); }
+  complete(id: number) { return this.http.post<M.Session>(`${this.base}/interviews/${id}/complete`, {}); }
+  deleteSession(id: number) { return this.http.delete<void>(`${this.base}/interviews/${id}`); }
+
+  // ---- bookmarks, status, progress
+  bookmarks() { return this.http.get<M.Bookmark[]>(`${this.base}/bookmarks`); }
+  bookmark(questionId: number, notes?: string | null) { return this.http.put<M.Bookmark>(`${this.base}/questions/${questionId}/bookmark`, { notes: notes ?? null }); }
+  unbookmark(questionId: number) { return this.http.delete<void>(`${this.base}/questions/${questionId}/bookmark`); }
+  statuses(ids: number[]) { return this.http.get<M.QuestionStatus[]>(`${this.base}/questions/status`, { params: { ids: ids.join(',') } }); }
+  attempts(questionId: number) { return this.http.get<M.Attempt[]>(`${this.base}/questions/${questionId}/attempts`); }
+  progress() { return this.http.get<M.Progress>(`${this.base}/progress`); }
 }
 
 export function errorMessage(e: unknown): string {
@@ -93,6 +124,7 @@ export function errorMessage(e: unknown): string {
       if (body.code === 'AI_INVALID_OUTPUT' && body.details?.['problems']) extra = ' — ' + (body.details['problems'] as string[]).join('; ');
       return body.message + extra;
     }
+    if (e.status === 504) return 'The request timed out. AI calls can take a while — please try again.';
     return e.status === 0 ? 'Cannot reach the server. Is the backend running on :8080?' : `Request failed (${e.status})`;
   }
   return 'Unexpected error';

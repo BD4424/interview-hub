@@ -63,7 +63,7 @@ public class AiQuestionService {
             List<String> tagNames = q.getTags().stream().map(Tag::getName).toList();
             List<String> related = new ArrayList<>(jdbc.queryForList(
                     "SELECT q.question_text FROM question_relations r JOIN questions q ON q.id = r.child_question_id " +
-                    "WHERE r.parent_question_id = ? ORDER BY r.sequence_number", String.class, id));
+                            "WHERE r.parent_question_id = ? ORDER BY r.sequence_number", String.class, id));
             List<Long> tagIds = q.getTags().stream().map(Tag::getId).toList();
             if (!tagIds.isEmpty()) {
                 var spec = QuestionSpecifications.of(new QuestionSpecifications.Filter(null, q.getTopic().getId(), null, tagIds,
@@ -96,10 +96,21 @@ public class AiQuestionService {
         if (outcome.valid().isEmpty())
             throw new AiExceptions.AiOutputException("The AI reply contained no valid follow-up questions", outcome.rejected());
 
-        List<FollowUpItem> items = tx.execute(s -> outcome.valid().stream().map(v -> toItem(base.id(), v, mode)).toList());
+        // semantic check for all items in one embedding call (outside transactions)
+        List<String> texts = outcome.valid().stream().map(ValidFollowUp::question).toList();
+        SemanticDuplicateDetector.BatchResult sem = semantic.findSimilarBatch(texts, 1);
+        List<String> rejected = new ArrayList<>(outcome.rejected());
+        if (sem.note() != null && semantic.enabled()) rejected.add("Note: " + sem.note());
+
+        List<FollowUpItem> items = tx.execute(s -> {
+            List<FollowUpItem> out = new ArrayList<>();
+            for (int i = 0; i < outcome.valid().size(); i++)
+                out.add(toItem(base.id(), outcome.valid().get(i), mode, sem.matches().get(i)));
+            return out;
+        });
         String disclaimer = "AI-generated practice questions" + (company != null
                 ? ". The style is adapted to " + company + ", but these are NOT questions reported as asked at " + company + "." : ".");
-        return new FollowUpBatch(base.id(), ai.provider() + "/" + ai.model(), company, disclaimer, items, outcome.rejected());
+        return new FollowUpBatch(base.id(), ai.provider() + "/" + ai.model(), company, disclaimer, items, rejected);
     }
 
     private RawBatch callForBatch(String system, String user) {
@@ -121,23 +132,23 @@ public class AiQuestionService {
         catch (Exception e) { throw new IllegalArgumentException("JSON does not match the schema (" + e.getClass().getSimpleName() + ")"); }
     }
 
-    private FollowUpItem toItem(Long parentId, ValidFollowUp v, FollowUpMode mode) {
+    private FollowUpItem toItem(Long parentId, ValidFollowUp v, FollowUpMode mode, List<SemanticDuplicateDetector.SemanticMatch> sem) {
         List<String> existing = new ArrayList<>(), suggested = new ArrayList<>();
         splitTags(v.tags(), existing, suggested);
-        DuplicateInfo dup = duplicateOf(v.question(), v.fingerprint());
+        DuplicateInfo dup = duplicateOf(v.fingerprint(), sem, parentId);
         Persistence p = mode == FollowUpMode.SESSION_ONLY ? Persistence.SESSION_ONLY
                 : dup != null && "EXACT_DUPLICATE".equals(dup.matchType()) ? Persistence.LINK_EXISTING : Persistence.REVIEW_ELIGIBLE;
         return new FollowUpItem(parentId, v.question(), v.expectedAnswerPoints(), v.difficulty(), existing, suggested, v.reason(), p, dup);
     }
 
-    private DuplicateInfo duplicateOf(String text, String fingerprint) {
+    private DuplicateInfo duplicateOf(String fingerprint, List<SemanticDuplicateDetector.SemanticMatch> sem, Long parentId) {
         var exact = questions.findByFingerprint(fingerprint);
         if (exact.isPresent())
             return new DuplicateInfo("EXACT_DUPLICATE", exact.get().getId(), exact.get().getQuestionText(), exact.get().getApprovalStatus(), 1.0);
-        var sims = semantic.findSimilar(text, 1);
-        if (!sims.isEmpty()) {
-            var m = sims.get(0);
-            return questions.findById(m.questionId()).map(q -> new DuplicateInfo(m.score() >= 0.92 ? "LIKELY_SEMANTIC_DUPLICATE" : "POSSIBLE_DUPLICATE",
+        for (var m : sem == null ? List.<SemanticDuplicateDetector.SemanticMatch>of() : sem) {
+            if (m.questionId().equals(parentId)) continue;
+            return questions.findById(m.questionId()).map(q -> new DuplicateInfo(
+                    m.score() >= semantic.likelyThreshold() ? "LIKELY_SEMANTIC_DUPLICATE" : "POSSIBLE_DUPLICATE",
                     q.getId(), q.getQuestionText(), q.getApprovalStatus(), m.score())).orElse(null);
         }
         return null;
@@ -165,18 +176,23 @@ public class AiQuestionService {
         var existing = questions.findByFingerprint(v.fingerprint());
         if (existing.isPresent()) return linkExisting(parentId, existing.get());
 
+        List<SemanticDuplicateDetector.SemanticMatch> sem = semantic.findSimilar(v.question(), 2).stream()
+                .filter(m -> !m.questionId().equals(parentId)).toList();
         List<String> applied = new ArrayList<>(), suggested = new ArrayList<>();
         tx.executeWithoutResult(s -> splitTags(v.tags(), applied, suggested));
-        String notes = "AI follow-up of question #" + parentId + ".\nWhy asked: " + v.reason()
-                + (suggested.isEmpty() ? "" : "\n" + SUGGESTED_TAGS_PREFIX + String.join(", ", suggested));
+        StringBuilder notes = new StringBuilder("AI follow-up of question #" + parentId + ".\nWhy asked: " + v.reason());
+        if (!suggested.isEmpty()) notes.append("\n").append(SUGGESTED_TAGS_PREFIX).append(String.join(", ", suggested));
+        if (!sem.isEmpty()) notes.append("\nSimilar existing question: #").append(sem.get(0).questionId())
+                .append(" (similarity ").append(sem.get(0).score()).append(") — check before approving.");
         String answer = "Expected answer points (AI-generated, unverified):\n- " + String.join("\n- ", v.expectedAnswerPoints());
         try {
             var res = writer.insert(new QuestionWriter.NewQuestion(v.question(), answer, base.topicId(), applied, v.difficulty(), null,
                     AnswerStatus.UNVERIFIED, SourceType.AI_GENERATED, "AI follow-up of #" + parentId + " (" + ai.provider() + "/" + ai.model() + ")",
-                    notes, ApprovalStatus.PENDING, List.of()));
+                    notes.toString(), ApprovalStatus.PENDING, List.of()));
             link(parentId, res.question().getId());
             return new SaveFollowUpResult(SaveStatus.CREATED_PENDING_REVIEW, res.question().getId(), ApprovalStatus.PENDING,
-                    "Saved for review. It will appear in the question bank after approval.");
+                    sem.isEmpty() ? "Saved for review. It will appear in the question bank after approval."
+                            : "Saved for review, flagged as similar to #" + sem.get(0).questionId() + ".");
         } catch (DataIntegrityViolationException race) {
             Question q = questions.findByFingerprint(v.fingerprint()).orElseThrow(() -> race);
             return linkExisting(parentId, q);

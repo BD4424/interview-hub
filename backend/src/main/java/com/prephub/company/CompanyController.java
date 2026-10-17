@@ -1,5 +1,6 @@
 package com.prephub.company;
 
+import com.prephub.practice.PracticeStats;
 import com.prephub.question.QuestionRepository;
 import com.prephub.question.QuestionRepository.LabelCount;
 import jakarta.validation.Valid;
@@ -14,10 +15,15 @@ import java.util.List;
 public class CompanyController {
     private final CompanyService service;
     private final QuestionRepository questions;
-    public CompanyController(CompanyService service, QuestionRepository questions) { this.service = service; this.questions = questions; }
+    private final PracticeStats practice;
+
+    public CompanyController(CompanyService service, QuestionRepository questions, PracticeStats practice) {
+        this.service = service; this.questions = questions; this.practice = practice;
+    }
 
     public record Bucket(String label, long count) {}
     public record CompanySummary(CompanyService.CompanyDto company, long totalQuestions, long answered, long unanswered,
+                                 long bookmarked, long practiced,
                                  List<Bucket> byTopic, List<Bucket> byDifficulty, List<Bucket> byRound, List<Bucket> byTag) {}
 
     @GetMapping public List<CompanyService.CompanyDto> list(@RequestParam(required = false) String q) { return service.list(q); }
@@ -27,8 +33,9 @@ public class CompanyController {
     public CompanySummary summary(@PathVariable Long id) {
         var c = service.getDto(id);
         long total = questions.companyTotal(id), answered = questions.companyAnswered(id);
-        return new CompanySummary(c, total, answered, total - answered,
-                map(questions.companyByTopic(id)), questions.companyByDifficultyRaw(id).stream().map(r -> new Bucket(r[0] == null ? "UNSPECIFIED" : r[0].toString(), ((Number) r[1]).longValue())).toList(),
+        return new CompanySummary(c, total, answered, total - answered, practice.companyBookmarked(id), practice.companyPracticed(id),
+                map(questions.companyByTopic(id)),
+                questions.companyByDifficultyRaw(id).stream().map(r -> new Bucket(r[0] == null ? "UNSPECIFIED" : r[0].toString(), ((Number) r[1]).longValue())).toList(),
                 map(questions.companyByRound(id)), map(questions.companyByTag(id)));
     }
 
