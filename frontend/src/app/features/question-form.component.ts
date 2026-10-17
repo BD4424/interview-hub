@@ -2,23 +2,39 @@ import { Component, Input, OnInit, inject, signal } from '@angular/core';
 import { FormArray, FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { HttpErrorResponse } from '@angular/common/http';
+import { debounceTime, distinctUntilChanged, filter, switchMap, catchError, of } from 'rxjs';
 import { ApiService, errorMessage } from '../core/api.service';
-import { Company, DIFFICULTIES, Question, QUESTION_TYPES, QuestionRequest, Tag, Topic } from '../core/models';
+import { Company, DIFFICULTIES, DedupCheck, Question, QUESTION_TYPES, QuestionRequest, Tag, Topic } from '../core/models';
 
 @Component({
   selector: 'app-question-form', standalone: true, imports: [ReactiveFormsModule, RouterLink],
   template: `
-  <h1>{{ id ? 'Edit question' : 'Add question' }}</h1>
+  <div class="page-header"><div><h1>{{ id ? 'Edit question' : 'Add question' }}</h1>
+    <p>Only the question and topic are required. Leave company empty when you don't know where it was asked.</p></div></div>
   @if (error()) { <div class="banner error">{{ error() }}
     @if (duplicateId()) { — <a [routerLink]="['/questions', duplicateId(), 'edit']">open the existing question</a> to add companies or tags instead. }
   </div> }
   <form class="card" [formGroup]="f" (ngSubmit)="save()">
     <label>Question *</label>
-    <textarea formControlName="questionText"></textarea>
+    <textarea formControlName="questionText" rows="3"></textarea>
     @if (f.controls.questionText.touched && f.controls.questionText.invalid) { <div class="error">Question text is required (max 10,000 characters).</div> }
+    @if (similar(); as r) {
+      @if (r.exact) {
+        <div class="banner error" style="margin-top:.5rem">This exact question already exists:
+          <a [routerLink]="['/questions', r.exact.questionId, 'edit']">#{{ r.exact.questionId }} {{ r.exact.questionText }}</a></div>
+      } @else if (r.similar.length) {
+        <div class="banner info" style="margin-top:.5rem">
+          <strong>Similar questions already in your bank</strong> — make sure this isn't the same question in different words:
+          @for (m of r.similar; track m.questionId) {
+            <div class="row" style="margin-top:.3rem"><span class="chip" [class.bad]="m.classification === 'LIKELY_SEMANTIC_DUPLICATE'" [class.warn]="m.classification !== 'LIKELY_SEMANTIC_DUPLICATE'">{{ m.score }}</span>
+              <a [routerLink]="['/questions', m.questionId, 'edit']" target="_blank">{{ m.questionText }}</a></div>
+          }
+        </div>
+      }
+    }
 
     <label>Answer / explanation (optional)</label>
-    <textarea formControlName="answerText" rows="6"></textarea>
+    <textarea formControlName="answerText" rows="7"></textarea>
 
     <div class="grid">
       <div><label>Primary topic *</label>
@@ -43,7 +59,7 @@ import { Company, DIFFICULTIES, Question, QUESTION_TYPES, QuestionRequest, Tag, 
     <datalist id="company-list">@for (c of allCompanies(); track c.id) { <option [value]="c.name"></option> }</datalist>
     <div formArrayName="companies">
       @for (g of companies.controls; track g; let i = $index) {
-        <div class="card" [formGroupName]="i">
+        <div class="card" [formGroupName]="i" style="background:var(--bg-2)">
           <div class="grid">
             <div><label>Company * (existing or new)</label><input formControlName="companyName" list="company-list"></div>
             <div><label>Interview round</label><input formControlName="interviewRound" placeholder="e.g. Technical 1"></div>
@@ -54,7 +70,7 @@ import { Company, DIFFICULTIES, Question, QUESTION_TYPES, QuestionRequest, Tag, 
               <option value="REPORTED">Reported</option><option value="VERIFIED">Verified</option><option value="UNVERIFIED">Unverified</option></select></div>
           </div>
           <label>Source / evidence</label><input formControlName="sourceReference">
-          <button type="button" class="secondary" style="margin-top:.5rem" (click)="removeCompany(i)">Remove company</button>
+          <button type="button" class="danger" style="margin-top:.6rem" (click)="removeCompany(i)">Remove company</button>
         </div>
       }
     </div>
@@ -64,18 +80,19 @@ import { Company, DIFFICULTIES, Question, QUESTION_TYPES, QuestionRequest, Tag, 
     <label>Source reference</label><input formControlName="sourceReference">
     <label>Notes</label><textarea formControlName="notes"></textarea>
 
-    <div class="row" style="margin-top:1rem">
-      <button type="submit" [disabled]="saving()">{{ saving() ? 'Saving…' : 'Save' }}</button>
+    <div class="row" style="margin-top:1.2rem">
+      <button type="submit" class="lg" [disabled]="saving()">{{ saving() ? 'Saving…' : 'Save question' }}</button>
       <a class="btn secondary" routerLink="/questions">Cancel</a>
     </div>
   </form>`
 })
 export class QuestionFormComponent implements OnInit {
-  @Input() id?: string;  // bound from route param
+  @Input() id?: string;
   private api = inject(ApiService); private router = inject(Router); private fb = inject(FormBuilder);
   difficulties = DIFFICULTIES; types = QUESTION_TYPES;
   topics = signal<Topic[]>([]); allTags = signal<Tag[]>([]); allCompanies = signal<Company[]>([]);
   error = signal<string | null>(null); duplicateId = signal<number | null>(null); saving = signal(false);
+  similar = signal<DedupCheck | null>(null);
 
   f = this.fb.group({
     questionText: ['', [Validators.required, Validators.maxLength(10000)]],
@@ -91,6 +108,12 @@ export class QuestionFormComponent implements OnInit {
     this.api.tags().subscribe(v => this.allTags.set(v));
     this.api.companies().subscribe(v => this.allCompanies.set(v));
     if (this.id) this.api.question(+this.id).subscribe({ next: q => this.load(q), error: e => this.error.set(errorMessage(e)) });
+    // live duplicate check while typing (exact + semantic); purely advisory
+    this.f.controls.questionText.valueChanges.pipe(
+      debounceTime(900), distinctUntilChanged(),
+      filter(v => (v ?? '').trim().length >= 15),
+      switchMap(v => this.api.checkDuplicate(v!, this.id ? +this.id : null).pipe(catchError(() => of(null))))
+    ).subscribe(r => this.similar.set(r));
   }
 
   private companyGroup(c: any = {}) {
@@ -111,7 +134,7 @@ export class QuestionFormComponent implements OnInit {
       questionText: q.questionText, answerText: q.answerText ?? '', topicId: q.topicId, difficulty: q.difficulty ?? null,
       questionType: q.questionType ?? null, answerStatus: q.answerStatus === 'NONE' ? null : q.answerStatus,
       tags: q.tags.map(t => t.name).join(', '), sourceReference: q.sourceReference ?? '', notes: q.notes ?? ''
-    });
+    }, { emitEvent: false });
     this.companies.clear();
     q.companies.forEach(c => this.companies.push(this.companyGroup(c)));
   }
