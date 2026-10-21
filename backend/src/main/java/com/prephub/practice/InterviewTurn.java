@@ -3,11 +3,13 @@ package com.prephub.practice;
 import com.prephub.common.Enums.Difficulty;
 import com.prephub.practice.PracticeEnums.*;
 import jakarta.persistence.*;
+import lombok.Data;
 
 import java.time.Instant;
 
 @Entity
 @Table(name = "interview_turns")
+@Data
 public class InterviewTurn {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY) private Long id;
     @Column(name = "session_id", nullable = false) private Long sessionId;
@@ -29,36 +31,4 @@ public class InterviewTurn {
 
     @PrePersist void pre() { if (askedAt == null) askedAt = Instant.now(); }
 
-    public Long getId() { return id; }
-    public Long getSessionId() { return sessionId; }
-    public void setSessionId(Long s) { this.sessionId = s; }
-    public Long getQuestionId() { return questionId; }
-    public void setQuestionId(Long q) { this.questionId = q; }
-    public String getQuestionText() { return questionText; }
-    public void setQuestionText(String t) { this.questionText = t; }
-    public String getUserAnswer() { return userAnswer; }
-    public void setUserAnswer(String a) { this.userAnswer = a; }
-    public String getFeedbackJson() { return feedbackJson; }
-    public void setFeedbackJson(String f) { this.feedbackJson = f; }
-    public Double getScore() { return score; }
-    public void setScore(Double s) { this.score = s; }
-    public int getTurnNumber() { return turnNumber; }
-    public void setTurnNumber(int n) { this.turnNumber = n; }
-    public TurnType getType() { return type; }
-    public void setType(TurnType t) { this.type = t; }
-    public TurnStatus getStatus() { return status; }
-    public void setStatus(TurnStatus s) { this.status = s; }
-    public Long getParentTurnId() { return parentTurnId; }
-    public void setParentTurnId(Long p) { this.parentTurnId = p; }
-    public String getExpectedPoints() { return expectedPoints; }
-    public void setExpectedPoints(String e) { this.expectedPoints = e; }
-    public Difficulty getDifficulty() { return difficulty; }
-    public void setDifficulty(Difficulty d) { this.difficulty = d; }
-    public String getTopicName() { return topicName; }
-    public void setTopicName(String t) { this.topicName = t; }
-    public Confidence getConfidence() { return confidence; }
-    public void setConfidence(Confidence c) { this.confidence = c; }
-    public Instant getAskedAt() { return askedAt; }
-    public Instant getAnsweredAt() { return answeredAt; }
-    public void setAnsweredAt(Instant a) { this.answeredAt = a; }
 }

@@ -59,12 +59,29 @@ public class AiConfig {
         return new SpringAiTextClient(ChatClient.create(chatModel), "openai", model);
     }
 
+//    @Bean
+//    public EmbeddingClient embeddingClient(@Value("${prephub.ai.openai.embedding-model:text-embedding-3-small}") String model,
+//                                           @Value("${prephub.dedup.semantic-enabled:true}") boolean semanticEnabled) {
+//        String reason = disabledReason();
+//        if (reason != null) return new EmbeddingClient.Disabled(reason);
+//        if (!semanticEnabled) return new EmbeddingClient.Disabled("Semantic duplicate detection is disabled (DEDUP_SEMANTIC_ENABLED=false).");
+//        OpenAiEmbeddingModel embeddingModel = new OpenAiEmbeddingModel(api(), MetadataMode.NONE,
+//                OpenAiEmbeddingOptions.builder().model(model).build(), retry());
+//        log.info("AI embeddings enabled: model={}", model);
+//        return new SpringAiEmbeddingClient(embeddingModel, model);
+//    }
+
+
     @Bean
     public EmbeddingClient embeddingClient(@Value("${prephub.ai.openai.embedding-model:text-embedding-3-small}") String model,
                                            @Value("${prephub.dedup.semantic-enabled:true}") boolean semanticEnabled) {
         String reason = disabledReason();
         if (reason != null) return new EmbeddingClient.Disabled(reason);
         if (!semanticEnabled) return new EmbeddingClient.Disabled("Semantic duplicate detection is disabled (DEDUP_SEMANTIC_ENABLED=false).");
+
+        // Temporary debug logging
+        log.info("Loading embedding client with API key prefix: {}", apiKey == null ? "null" : apiKey.substring(0, Math.min(7, apiKey.length())) + "...");
+
         OpenAiEmbeddingModel embeddingModel = new OpenAiEmbeddingModel(api(), MetadataMode.NONE,
                 OpenAiEmbeddingOptions.builder().model(model).build(), retry());
         log.info("AI embeddings enabled: model={}", model);

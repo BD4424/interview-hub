@@ -13,7 +13,10 @@ import java.util.List;
 @RequestMapping("/api/v1")
 public class QuestionController {
     private final QuestionService service;
-    public QuestionController(QuestionService service) { this.service = service; }
+
+    public QuestionController(QuestionService service) {
+        this.service = service;
+    }
 
     @GetMapping("/questions")
     public PageResponse<QuestionDto> search(@RequestParam(required = false) String q,
@@ -43,20 +46,35 @@ public class QuestionController {
         return service.search(new QuestionSpecifications.Filter(q, topicId, companyId, tagIds, false, difficulty, null, hasAnswer, null), page, size, "newest");
     }
 
-    @GetMapping("/questions/{id}") public QuestionDto get(@PathVariable Long id) { return service.get(id); }
+    @GetMapping("/questions/{id}")
+    public QuestionDto get(@PathVariable Long id) {
+        return service.get(id);
+    }
 
-    @PostMapping("/questions") @ResponseStatus(HttpStatus.CREATED)
-    public QuestionDto create(@Valid @RequestBody QuestionRequest r) { return service.create(r); }
+    @PostMapping("/questions")
+    @ResponseStatus(HttpStatus.CREATED)
+    public QuestionDto create(@Valid @RequestBody QuestionRequest r) {
+        return service.create(r);
+    }
 
     @PutMapping("/questions/{id}")
-    public QuestionDto update(@PathVariable Long id, @Valid @RequestBody QuestionRequest r) { return service.update(id, r); }
+    public QuestionDto update(@PathVariable Long id, @Valid @RequestBody QuestionRequest r) {
+        return service.update(id, r);
+    }
 
-    @DeleteMapping("/questions/{id}") @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void delete(@PathVariable Long id) { service.delete(id); }
+    @DeleteMapping("/questions/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@PathVariable Long id) {
+        service.delete(id);
+    }
 
     @PostMapping("/questions/{id}/companies")
-    public QuestionDto addCompany(@PathVariable Long id, @Valid @RequestBody CompanyAttributionRequest r) { return service.addCompany(id, r); }
+    public QuestionDto addCompany(@PathVariable Long id, @Valid @RequestBody CompanyAttributionRequest r) {
+        return service.addCompany(id, r);
+    }
 
     @DeleteMapping("/questions/{id}/companies/{companyId}")
-    public QuestionDto removeCompany(@PathVariable Long id, @PathVariable Long companyId) { return service.removeCompany(id, companyId); }
+    public QuestionDto removeCompany(@PathVariable Long id, @PathVariable Long companyId) {
+        return service.removeCompany(id, companyId);
+    }
 }

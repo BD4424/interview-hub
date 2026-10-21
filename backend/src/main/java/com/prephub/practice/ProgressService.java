@@ -11,7 +11,9 @@ import java.time.*;
 import java.util.*;
 import java.util.stream.Collectors;
 
-/** Progress analytics. Days are bucketed in the configured time zone (APP_TIMEZONE, default Asia/Kolkata). */
+/**
+ * Progress analytics. Days are bucketed in the configured time zone (APP_TIMEZONE, default Asia/Kolkata).
+ */
 @Service
 public class ProgressService {
     private final PracticeStats stats;
@@ -23,7 +25,11 @@ public class ProgressService {
 
     public ProgressService(PracticeStats stats, PracticeService practice, SessionRepository sessions, BookmarkRepository bookmarks,
                            JdbcTemplate jdbc, @Value("${prephub.timezone:Asia/Kolkata}") String zone) {
-        this.stats = stats; this.practice = practice; this.sessions = sessions; this.bookmarks = bookmarks; this.jdbc = jdbc;
+        this.stats = stats;
+        this.practice = practice;
+        this.sessions = sessions;
+        this.bookmarks = bookmarks;
+        this.jdbc = jdbc;
         this.zone = ZoneId.of(zone);
     }
 
@@ -54,11 +60,15 @@ public class ProgressService {
         // per topic (all time): attempts, distinct questions, average of each question's LATEST score (current skill)
         Map<String, Integer> totals = new HashMap<>();
         jdbc.query("SELECT t.name, COUNT(q.id) FROM topics t LEFT JOIN questions q ON q.topic_id = t.id AND q.approval_status = 'APPROVED' GROUP BY t.name",
-                rs -> { totals.put(rs.getString(1), rs.getInt(2)); });
+                rs -> {
+                    totals.put(rs.getString(1), rs.getInt(2));
+                });
         Map<Long, String> topicOf = new HashMap<>();
         if (!qstats.isEmpty())
             jdbc.query("SELECT q.id, t.name FROM questions q JOIN topics t ON t.id = q.topic_id WHERE q.id IN (" + PracticeStats.placeholders(qstats.size()) + ")",
-                    rs -> { topicOf.put(rs.getLong(1), rs.getString(2)); }, qstats.keySet().toArray());
+                    rs -> {
+                        topicOf.put(rs.getLong(1), rs.getString(2));
+                    }, qstats.keySet().toArray());
         Map<String, List<Map.Entry<Long, PracticeStats.QStat>>> byTopic = qstats.entrySet().stream()
                 .filter(e -> topicOf.containsKey(e.getKey())).collect(Collectors.groupingBy(e -> topicOf.get(e.getKey())));
         List<TopicProgress> topics = byTopic.entrySet().stream().map(e -> new TopicProgress(e.getKey(),
@@ -71,7 +81,8 @@ public class ProgressService {
         int due = 0;
         for (var e : qstats.entrySet()) {
             var q = e.getValue();
-            if (q.lastScore() != null && (q.lastScore() < PracticeMath.WEAK_SCORE || PracticeMath.isDue(q.lastAttempt(), q.lastScore(), q.attempts(), now))) due++;
+            if (q.lastScore() != null && (q.lastScore() < PracticeMath.WEAK_SCORE || PracticeMath.isDue(q.lastAttempt(), q.lastScore(), q.attempts(), now)))
+                due++;
         }
 
         List<RecentAttempt> recentAttempts = jdbc.query("SELECT a.question_id, q.question_text, t.name, a.score, a.attempted_at FROM question_attempts a " +

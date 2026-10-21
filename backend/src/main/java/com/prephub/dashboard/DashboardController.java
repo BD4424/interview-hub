@@ -26,17 +26,28 @@ public class DashboardController {
     private final ProgressService progress;
 
     public DashboardController(QuestionRepository q, ImportJobRepository j, ImportCandidateRepository c, ProgressService p) {
-        questions = q; jobs = j; candidates = c; progress = p;
+        questions = q;
+        jobs = j;
+        candidates = c;
+        progress = p;
     }
 
-    public record Bucket(String label, long count) {}
-    public record RecentImport(Long id, String filename, String status, int total, int imported, Instant createdAt) {}
-    public record Dashboard(long totalApproved, long answered, long unanswered, List<Bucket> byTopic, List<Bucket> byCompany,
+    public record Bucket(String label, long count) {
+    }
+
+    public record RecentImport(Long id, String filename, String status, int total, int imported, Instant createdAt) {
+    }
+
+    public record Dashboard(long totalApproved, long answered, long unanswered, List<Bucket> byTopic,
+                            List<Bucket> byCompany,
                             long pendingDuplicateReviews, long pendingAiReviews, List<RecentImport> recentImports,
                             PracticeDtos.ProgressSummary practice, List<PracticeDtos.TopicProgress> weakTopics,
-                            List<PracticeDtos.SessionSummary> recentSessions, List<PracticeDtos.DayProgress> last14Days) {}
+                            List<PracticeDtos.SessionSummary> recentSessions,
+                            List<PracticeDtos.DayProgress> last14Days) {
+    }
 
-    @GetMapping @Transactional(readOnly = true)
+    @GetMapping
+    @Transactional(readOnly = true)
     public Dashboard get() {
         long total = questions.countApproved(), answered = questions.countAnswered();
         Specification<Question> pending = (r, q, cb) -> cb.equal(r.get("approvalStatus"), ApprovalStatus.PENDING);

@@ -13,19 +13,37 @@ public class SpringAiEmbeddingClient implements EmbeddingClient {
 
     public SpringAiEmbeddingClient(EmbeddingModel model, String modelName) { this.model = model; this.modelName = modelName; }
 
-    @Override public boolean available() { return true; }
-    @Override public String model() { return modelName; }
-    @Override public String status() { return "Enabled (" + modelName + ")"; }
+    @Override
+    public boolean available() { return true; }
+
+    @Override
+    public String model() { return modelName; }
+
+    @Override
+    public String status() { return "Enabled (" + modelName + ")"; }
 
     @Override
     public List<float[]> embed(List<String> texts) {
         try {
             List<float[]> out = model.embed(texts);
-            if (out.size() != texts.size()) throw new IllegalStateException("embedding count mismatch");
+
+            if (out == null || out.size() != texts.size()) {
+                throw new IllegalStateException("Embedding count mismatch");
+            }
+
             return out;
         } catch (RuntimeException e) {
-            log.warn("Embedding call failed: {}", e.getClass().getSimpleName());
-            throw new IllegalStateException("Embedding provider call failed (" + e.getClass().getSimpleName() + ")");
+            log.error(
+                    "Embedding call failed. Exception: {}, message: {}",
+                    e.getClass().getName(),
+                    e.getMessage(),
+                    e
+            );
+
+            throw new IllegalStateException(
+                    "Embedding provider call failed: " + e.getMessage(),
+                    e
+            );
         }
     }
 }

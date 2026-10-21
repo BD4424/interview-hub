@@ -11,15 +11,30 @@ import java.util.List;
 @RequestMapping("/api/v1/interviews")
 public class PracticeController {
     private final PracticeService service;
-    public PracticeController(PracticeService service) { this.service = service; }
 
-    @PostMapping @ResponseStatus(HttpStatus.CREATED)
-    public SessionDto start(@Valid @RequestBody StartSessionRequest r) { return service.start(r); }
+    public PracticeController(PracticeService service) {
+        this.service = service;
+    }
 
-    @GetMapping public List<SessionSummary> recent() { return service.recent(); }
-    @GetMapping("/{id}") public SessionDto get(@PathVariable Long id) { return service.get(id, null); }
+    @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
+    public SessionDto start(@Valid @RequestBody StartSessionRequest r) {
+        return service.start(r);
+    }
 
-    /** Submit an answer. AI evaluation is synchronous (typically 5-20 s). With selfScore the AI is not called. */
+    @GetMapping
+    public List<SessionSummary> recent() {
+        return service.recent();
+    }
+
+    @GetMapping("/{id}")
+    public SessionDto get(@PathVariable Long id) {
+        return service.get(id, null);
+    }
+
+    /**
+     * Submit an answer. AI evaluation is synchronous (typically 5-20 s). With selfScore the AI is not called.
+     */
     @PostMapping("/{id}/answers")
     public SessionDto answer(@PathVariable Long id, @RequestParam Long turnId, @Valid @RequestBody AnswerRequest r) {
         return service.answer(id, turnId, r);
@@ -31,12 +46,28 @@ public class PracticeController {
     }
 
     @PostMapping("/{id}/turns/{turnId}/skip")
-    public SessionDto skip(@PathVariable Long id, @PathVariable Long turnId) { return service.skip(id, turnId); }
+    public SessionDto skip(@PathVariable Long id, @PathVariable Long turnId) {
+        return service.skip(id, turnId);
+    }
 
     @PostMapping("/{id}/turns/{turnId}/follow-up")
-    public SessionDto followUp(@PathVariable Long id, @PathVariable Long turnId) { return service.followUp(id, turnId); }
+    public SessionDto followUp(@PathVariable Long id, @PathVariable Long turnId) {
+        return service.followUp(id, turnId);
+    }
 
-    @PostMapping("/{id}/next") public SessionDto next(@PathVariable Long id) { return service.next(id); }
-    @PostMapping("/{id}/complete") public SessionDto complete(@PathVariable Long id) { return service.complete(id); }
-    @DeleteMapping("/{id}") @ResponseStatus(HttpStatus.NO_CONTENT) public void delete(@PathVariable Long id) { service.delete(id); }
+    @PostMapping("/{id}/next")
+    public SessionDto next(@PathVariable Long id) {
+        return service.next(id);
+    }
+
+    @PostMapping("/{id}/complete")
+    public SessionDto complete(@PathVariable Long id) {
+        return service.complete(id);
+    }
+
+    @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@PathVariable Long id) {
+        service.delete(id);
+    }
 }
