@@ -21,10 +21,10 @@ prephub:
   cors:
     allowed-origins: ${CORS_ORIGINS:http://localhost:4200}
   ai:
-    enabled: ${AI_ENABLED:true}
+    enabled: ${AI_ENABLED:false}
     provider: openai
     openai:
-      api-key: ${OPENAI_API_KEY}
+      api-key: ${OPENAI_API_KEY:default_value}
       base-url: ${OPENAI_BASE_URL:https://api.openai.com}
       model: ${OPENAI_MODEL:gpt-4o-mini}
       embedding-model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}

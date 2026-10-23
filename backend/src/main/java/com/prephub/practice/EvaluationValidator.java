@@ -57,7 +57,7 @@ public final class EvaluationValidator {
         return roundHalf(d);
     }
 
-    static double roundHalf(double d) { return Math.round(d * 2) / 2.0; }
+    public static double roundHalf(double d) { return Math.round(d * 2) / 2.0; }
 
     private static List<String> items(List<String> in) {
         LinkedHashMap<String, String> out = new LinkedHashMap<>();

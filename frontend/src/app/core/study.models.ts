@@ -14,12 +14,13 @@ export interface TagOption { tagId: number; tagName: string; questionCount: numb
 export interface LearningPath { topicId: number; custom: boolean; masteredThreshold: number; steps: PathStep[]; nextTagId?: number | null;
   overallMastery?: number | null; availableTags: TagOption[]; }
 
+// Flashcards have their own history; they never count as practice, scores or streaks.
 export type FlashScope = 'DUE' | 'NEW' | 'ALL';
 export type FlashGrade = 'KNEW' | 'SHAKY' | 'DIDNT';
 export interface FlashCard { questionId: number; question: string; answer?: string | null; topic: string; difficulty?: string; tags: string[];
-  lastScore?: number | null; attempts: number; bookmarked: boolean; reason: string; }
-export interface FlashDeck { scope: FlashScope; available: number; cards: FlashCard[]; }
-export interface GradeResult { questionId: number; grade: FlashGrade; score: number; attempts: number; nextReviewInDays: number; }
+  lastGrade?: FlashGrade | null; reviews: number; reason: string; }
+export interface FlashDeck { scope: FlashScope; available: number; dueNow: number; reviewedToday: number; cards: FlashCard[]; }
+export interface GradeResult { questionId: number; grade: FlashGrade; reviews: number; nextReviewInDays: number; }
 
 export type PlanPhase = 'UPCOMING' | 'TODAY' | 'PAST';
 export interface PlanItem { questionId: number; question: string; topic: string; difficulty?: string; lastScore?: number | null; attempts: number; done: boolean; }
@@ -33,7 +34,8 @@ export interface PlanDetail { plan: PlanSummary; scope: string; perDay: number; 
 export interface PlanRequest { title?: string | null; companyId?: number | null; interviewDate: string; topicIds: number[];
   dailyTarget?: number | null; notes?: string | null; }
 
-export interface WeekPeriod { from: string; to: string; answers: number; questions: number; activeDays: number; averageScore?: number | null; flashcards: number; }
+export interface WeekPeriod { from: string; to: string; answers: number; questions: number; activeDays: number; averageScore?: number | null;
+  flashcards: number; mockTests: number; }
 export interface WeeklyReport { thisWeek: WeekPeriod; lastWeek: WeekPeriod; answersChangePct?: number | null; scoreChange?: number | null;
   mostImproved?: { topic: string; delta: number; previous?: number; current?: number } | null;
   weakest: { questionId: number; question: string; topic: string; lastScore: number; lastAttempt: string }[]; showAsMondaySummary: boolean; }

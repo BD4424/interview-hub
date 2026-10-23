@@ -3,6 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { ApiService, errorMessage } from '../core/api.service';
 import { Company, Topic } from '../core/models';
+import { MockApi } from '../core/mock.api';
 import { StudyApi } from '../core/study.api';
 import { FlashCard, FlashGrade, FlashScope } from '../core/study.models';
 import { IconComponent } from '../shared/icon.component';
@@ -13,7 +14,7 @@ interface Result { card: FlashCard; grade: FlashGrade; nextDays: number; }
   selector: 'app-flashcards', standalone: true, imports: [FormsModule, RouterLink, IconComponent],
   template: `
   <div class="page-header">
-    <div><h1>Flashcards</h1><p>Fast recall, no AI cost. Your ratings feed Smart revision and spaced repetition.</p></div>
+    <div><h1>Flashcards</h1><p>Quick recall on its own schedule. Reviews are kept separate — they don't count as answered questions, scores or streaks.</p></div>
     @if (phase() !== 'setup') { <button class="secondary" (click)="phase.set('setup')">New deck</button> }
   </div>
   @if (error()) { <div class="banner error">{{ error() }}</div> }
@@ -23,7 +24,7 @@ interface Result { card: FlashCard; grade: FlashGrade; nextDays: number; }
       <div class="grid">
         <div><label>Cards</label>
           <select [(ngModel)]="scope">
-            <option value="DUE">Due & new (recommended)</option><option value="NEW">Only never-practised</option><option value="ALL">Everything</option>
+            <option value="DUE">Due & new (recommended)</option><option value="NEW">Only never-reviewed</option><option value="ALL">Everything</option>
           </select></div>
         <div><label>Topic</label>
           <select [(ngModel)]="topicId"><option [ngValue]="null">All topics</option>
@@ -45,14 +46,14 @@ interface Result { card: FlashCard; grade: FlashGrade; nextDays: number; }
   @if (phase() === 'play') {
     @if (card(); as c) {
       <div class="progress"><div class="bar"><span [style.width.%]="(index() / cards().length) * 100"></span></div>
-        <span class="muted small">{{ index() + 1 }} / {{ cards().length }}</span></div>
+        <span class="muted small">{{ index() + 1 }} / {{ cards().length }} · {{ reviewedToday() }} reviewed today</span></div>
       <div class="scene">
         <div class="flip" [class.flipped]="revealed()" (click)="flip()">
           <div class="face front card">
             <div class="row"><span class="chip">{{ c.topic }}</span>
               @if (c.difficulty) { <span [class]="'chip ' + c.difficulty">{{ c.difficulty }}</span> }
               <span class="chip warn">{{ c.reason }}</span>
-              @if (c.lastScore != null) { <span class="chip diff">last {{ c.lastScore }}</span> }</div>
+              @if (c.lastGrade) { <span class="chip diff">last: {{ label(c.lastGrade) }}</span> }</div>
             <div class="q pre">{{ c.question }}</div>
             <div class="hint muted small">Think of your answer, then tap or press Space</div>
           </div>
@@ -86,15 +87,15 @@ interface Result { card: FlashCard; grade: FlashGrade; nextDays: number; }
         <div class="t shaky"><div class="n">{{ count('SHAKY') }}</div>shaky</div>
         <div class="t didnt"><div class="n">{{ count('DIDNT') }}</div>didn't know</div>
       </div>
+      <p class="muted small">Flashcards don't affect your practice stats. To turn the misses into real, graded answers, take them as a mini mock test.</p>
       <div class="row" style="justify-content:center;margin-top:1rem">
-        @if (count('DIDNT') + count('SHAKY') > 0) { <button (click)="practiceMisses()" [disabled]="busy()"><app-icon name="practice" /> Practise the misses with AI</button> }
+        @if (misses().length) { <button (click)="testMisses()" [disabled]="busy()"><app-icon name="target" /> Mock test on {{ misses().length }} miss{{ misses().length === 1 ? '' : 'es' }}</button> }
         <button class="secondary" (click)="load()">Another deck</button>
-        <a class="btn secondary" routerLink="/progress">Progress</a>
       </div>
     </div>
     @for (r of results(); track r.card.questionId) {
       <div class="res"><span [class]="'chip ' + (r.grade === 'KNEW' ? 'ok' : r.grade === 'SHAKY' ? 'warn' : 'bad')">{{ label(r.grade) }}</span>
-        <span class="t">{{ r.card.question }}</span><span class="muted small">next in {{ r.nextDays }}d</span></div>
+        <span class="t">{{ r.card.question }}</span><span class="muted small">again in {{ r.nextDays }}d</span></div>
     }
   }
 
@@ -135,6 +136,7 @@ interface Result { card: FlashCard; grade: FlashGrade; nextDays: number; }
 export class FlashcardsComponent implements OnInit {
   private study = inject(StudyApi);
   private api = inject(ApiService);
+  private mock = inject(MockApi);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
   topics = signal<Topic[]>([]); companies = signal<Company[]>([]);
@@ -143,9 +145,11 @@ export class FlashcardsComponent implements OnInit {
   index = signal(0);
   revealed = signal(false);
   results = signal<Result[]>([]);
+  reviewedToday = signal(0);
   busy = signal(false);
   error = signal<string | null>(null);
   card = computed(() => this.cards()[this.index()] ?? null);
+  misses = computed(() => this.results().filter(r => r.grade !== 'KNEW').map(r => r.card.questionId));
 
   scope: FlashScope = 'DUE';
   topicId: number | null = null;
@@ -171,6 +175,7 @@ export class FlashcardsComponent implements OnInit {
       next: d => {
         this.busy.set(false);
         this.cards.set(d.cards); this.index.set(0); this.revealed.set(false); this.results.set([]);
+        this.reviewedToday.set(d.reviewedToday);
         this.phase.set(d.cards.length ? 'play' : 'empty');
       },
       error: e => { this.busy.set(false); this.error.set(errorMessage(e)); }
@@ -186,10 +191,11 @@ export class FlashcardsComponent implements OnInit {
     this.study.grade(c.questionId, g).subscribe({
       next: r => {
         this.busy.set(false);
+        this.reviewedToday.set(this.reviewedToday() + 1);
         this.results.set([...this.results(), { card: c, grade: g, nextDays: r.nextReviewInDays }]);
         this.revealed.set(false);
         if (this.index() + 1 >= this.cards().length) this.phase.set('done');
-        else setTimeout(() => this.index.set(this.index() + 1), 180);   // let the card flip back first
+        else setTimeout(() => this.index.set(this.index() + 1), 180);
       },
       error: e => { this.busy.set(false); this.error.set(errorMessage(e)); }
     });
@@ -209,12 +215,11 @@ export class FlashcardsComponent implements OnInit {
   count(g: FlashGrade) { return this.results().filter(r => r.grade === g).length; }
   label(g: FlashGrade) { return g === 'KNEW' ? 'knew' : g === 'SHAKY' ? 'shaky' : "didn't know"; }
 
-  /** Misses now have low scores, so Smart revision serves them first. */
-  practiceMisses() {
-    const misses = this.results().filter(r => r.grade !== 'KNEW').length;
+  /** Misses become a short untimed mock test, so they're answered and graded properly (that does count as practice). */
+  testMisses() {
     this.busy.set(true);
-    this.api.startSession({ type: 'REVISION', topicId: this.topicId, questionLimit: Math.max(1, Math.min(30, misses)) }).subscribe({
-      next: s => this.router.navigate(['/practice', s.id]),
+    this.mock.create({ scope: 'CUSTOM', questionIds: this.misses(), title: 'Flashcard misses · ' + this.misses().length + ' questions' }).subscribe({
+      next: t => this.router.navigate(['/mock-tests', t.id]),
       error: e => { this.busy.set(false); this.error.set(errorMessage(e)); }
     });
   }

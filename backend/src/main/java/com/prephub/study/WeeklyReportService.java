@@ -11,7 +11,10 @@ import java.time.temporal.TemporalAdjusters;
 import java.util.*;
 import java.util.stream.Collectors;
 
-/** This week (Monday → now, in APP_TIMEZONE) compared with the whole of last week. */
+/**
+ * This week (Monday → now, in APP_TIMEZONE) compared with the whole of last week. "Answers" are practice-session and
+ * mock-test answers only; flashcard reviews are reported separately and never counted as answers.
+ */
 @Service
 public class WeeklyReportService {
     private final JdbcTemplate jdbc;
@@ -21,13 +24,14 @@ public class WeeklyReportService {
         this.jdbc = jdbc; this.zone = ZoneId.of(zone);
     }
 
-    public record Period(LocalDate from, LocalDate to, int answers, int questions, int activeDays, Double averageScore, int flashcards) {}
+    public record Period(LocalDate from, LocalDate to, int answers, int questions, int activeDays, Double averageScore,
+                         int flashcards, int mockTests) {}
     public record Improved(String topic, double delta, Double previous, Double current) {}
     public record Weak(Long questionId, String question, String topic, double lastScore, Instant lastAttempt) {}
     public record WeeklyReport(Period thisWeek, Period lastWeek, Double answersChangePct, Double scoreChange,
                                Improved mostImproved, List<Weak> weakest, boolean showAsMondaySummary) {}
 
-    private record A(Long questionId, Double score, Instant at, String topic, String mode) {}
+    private record A(Long questionId, Double score, Instant at, String topic) {}
 
     @Transactional(readOnly = true)
     public WeeklyReport report() {
@@ -35,19 +39,20 @@ public class WeeklyReportService {
         LocalDate monday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
         LocalDate prevMonday = monday.minusWeeks(1);
         Instant thisStart = monday.atStartOfDay(zone).toInstant(), prevStart = prevMonday.atStartOfDay(zone).toInstant();
+        Instant end = today.plusDays(1).atStartOfDay(zone).toInstant();
 
-        List<A> rows = jdbc.query("SELECT a.question_id, a.score, a.attempted_at, t.name, a.mode FROM question_attempts a " +
+        List<A> rows = jdbc.query("SELECT a.question_id, a.score, a.attempted_at, t.name FROM question_attempts a " +
                         "JOIN questions q ON q.id = a.question_id JOIN topics t ON t.id = q.topic_id WHERE a.attempted_at >= ?",
-                (rs, i) -> new A(rs.getLong(1), rs.getObject(2) == null ? null : rs.getDouble(2), rs.getTimestamp(3).toInstant(), rs.getString(4), rs.getString(5)),
+                (rs, i) -> new A(rs.getLong(1), rs.getObject(2) == null ? null : rs.getDouble(2), rs.getTimestamp(3).toInstant(), rs.getString(4)),
                 Timestamp.from(prevStart));
         List<A> cur = rows.stream().filter(a -> !a.at().isBefore(thisStart)).toList();
         List<A> prev = rows.stream().filter(a -> a.at().isBefore(thisStart)).toList();
-        Period pc = period(cur, monday, today), pp = period(prev, prevMonday, monday.minusDays(1));
+        Period pc = period(cur, monday, today, thisStart, end), pp = period(prev, prevMonday, monday.minusDays(1), prevStart, thisStart);
 
-        var improved = StudyMath.mostImproved(topicAvg(prev), topicAvg(cur))
-                .map(e -> new Improved(e.getKey(), e.getValue(), topicAvg(prev).get(e.getKey()), topicAvg(cur).get(e.getKey()))).orElse(null);
+        Map<String, Double> prevAvg = topicAvg(prev), curAvg = topicAvg(cur);
+        Improved improved = StudyMath.mostImproved(prevAvg, curAvg)
+                .map(e -> new Improved(e.getKey(), e.getValue(), prevAvg.get(e.getKey()), curAvg.get(e.getKey()))).orElse(null);
 
-        // weakest: latest score per question (all time), lowest first
         Map<Long, Weak> latest = new LinkedHashMap<>();
         jdbc.query("SELECT a.question_id, q.question_text, t.name, a.score, a.attempted_at FROM question_attempts a JOIN questions q ON q.id = a.question_id " +
                         "JOIN topics t ON t.id = q.topic_id WHERE a.score IS NOT NULL AND q.approval_status = 'APPROVED' ORDER BY a.attempted_at, a.id",
@@ -56,16 +61,19 @@ public class WeeklyReportService {
                 .sorted(Comparator.comparingDouble(Weak::lastScore).thenComparing(Weak::lastAttempt)).limit(5).toList();
 
         Double scoreChange = pc.averageScore() != null && pp.averageScore() != null ? StudyMath.round1(pc.averageScore() - pp.averageScore()) : null;
-        boolean monday1 = today.getDayOfWeek() == DayOfWeek.MONDAY || today.getDayOfWeek() == DayOfWeek.TUESDAY;
-        return new WeeklyReport(pc, pp, StudyMath.pctChange(pp.answers(), pc.answers()), scoreChange, improved, weakest, monday1);
+        boolean earlyWeek = today.getDayOfWeek() == DayOfWeek.MONDAY || today.getDayOfWeek() == DayOfWeek.TUESDAY;
+        return new WeeklyReport(pc, pp, StudyMath.pctChange(pp.answers(), pc.answers()), scoreChange, improved, weakest, earlyWeek);
     }
 
-    private Period period(List<A> as, LocalDate from, LocalDate to) {
+    private Period period(List<A> as, LocalDate from, LocalDate to, Instant start, Instant end) {
         OptionalDouble avg = as.stream().filter(a -> a.score() != null).mapToDouble(A::score).average();
+        Integer flash = jdbc.queryForObject("SELECT COUNT(*) FROM flashcard_reviews WHERE reviewed_at >= ? AND reviewed_at < ?", Integer.class,
+                Timestamp.from(start), Timestamp.from(end));
+        Integer mocks = jdbc.queryForObject("SELECT COUNT(*) FROM mock_tests WHERE status = 'COMPLETED' AND submitted_at >= ? AND submitted_at < ?", Integer.class,
+                Timestamp.from(start), Timestamp.from(end));
         return new Period(from, to, as.size(), (int) as.stream().map(A::questionId).distinct().count(),
                 (int) as.stream().map(a -> a.at().atZone(zone).toLocalDate()).distinct().count(),
-                avg.isPresent() ? StudyMath.round1(avg.getAsDouble()) : null,
-                (int) as.stream().filter(a -> "FLASHCARD".equals(a.mode())).count());
+                avg.isPresent() ? StudyMath.round1(avg.getAsDouble()) : null, flash == null ? 0 : flash, mocks == null ? 0 : mocks);
     }
 
     private static Map<String, Double> topicAvg(List<A> as) {

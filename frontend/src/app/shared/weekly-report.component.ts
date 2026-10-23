@@ -4,7 +4,7 @@ import { RouterLink } from '@angular/router';
 import { StudyApi } from '../core/study.api';
 import { WeeklyReport } from '../core/study.models';
 
-/** "This week vs last week" card. [compact] hides it unless it's Monday/Tuesday or there's activity this week. */
+/** "This week vs last week". Answers = practice + mock-test answers; flashcard reviews are shown separately. */
 @Component({
   selector: 'app-weekly-report', standalone: true, imports: [RouterLink, DatePipe],
   template: `
@@ -18,20 +18,21 @@ import { WeeklyReport } from '../core/study.models';
         <div class="kp">
           <div><div class="muted small">Answers</div><div class="v">{{ r.thisWeek.answers }}</div>
             <div class="small" [class.up]="(r.answersChangePct ?? 0) > 0" [class.down]="(r.answersChangePct ?? 0) < 0">
-              @if (r.answersChangePct != null) { {{ r.answersChangePct > 0 ? '▲' : r.answersChangePct < 0 ? '▼' : '■' }} {{ abs(r.answersChangePct) }}% vs last week }
+              @if (r.answersChangePct != null) { {{ arrow(r.answersChangePct) }} {{ abs(r.answersChangePct) }}% vs last week }
               @else { last week: {{ r.lastWeek.answers }} }
             </div></div>
           <div><div class="muted small">Average score</div><div class="v">{{ r.thisWeek.averageScore ?? '—' }}</div>
             <div class="small" [class.up]="(r.scoreChange ?? 0) > 0" [class.down]="(r.scoreChange ?? 0) < 0">
-              @if (r.scoreChange != null) { {{ r.scoreChange > 0 ? '▲ +' : r.scoreChange < 0 ? '▼ ' : '■ ' }}{{ r.scoreChange }} vs last week }
+              @if (r.scoreChange != null) { {{ arrow(r.scoreChange) }} {{ abs(r.scoreChange) }} vs last week }
               @else { last week: {{ r.lastWeek.averageScore ?? '—' }} }
             </div></div>
           <div><div class="muted small">Active days</div><div class="v">{{ r.thisWeek.activeDays }}<span class="muted small">/7</span></div>
-            <div class="small muted">{{ r.thisWeek.flashcards }} flashcards</div></div>
+            <div class="small muted">{{ r.thisWeek.mockTests }} mock test{{ r.thisWeek.mockTests === 1 ? '' : 's' }} completed</div></div>
           <div><div class="muted small">Most improved</div>
             @if (r.mostImproved; as m) { <div class="v sm">{{ m.topic }}</div><div class="small up">▲ +{{ m.delta }} avg score</div> }
-            @else { <div class="v sm muted">—</div><div class="small muted">practice a topic two weeks running</div> }</div>
+            @else { <div class="v sm muted">—</div><div class="small muted">practise a topic two weeks running</div> }</div>
         </div>
+        <div class="muted small" style="margin-top:.6rem">+ {{ r.thisWeek.flashcards }} flashcard review{{ r.thisWeek.flashcards === 1 ? '' : 's' }} (not counted as answers)</div>
         @if (r.weakest.length) {
           <div class="muted small" style="margin-top:.8rem">Your weakest {{ r.weakest.length }} — fix these first:</div>
           @for (w of r.weakest; track w.questionId) {
@@ -59,4 +60,5 @@ export class WeeklyReportComponent implements OnInit {
   r = signal<WeeklyReport | null>(null);
   ngOnInit() { this.api.weekly().subscribe({ next: v => this.r.set(v), error: () => {} }); }
   abs(v: number) { return Math.abs(v); }
+  arrow(v: number) { return v > 0 ? '▲' : v < 0 ? '▼' : '■'; }
 }

@@ -5,6 +5,8 @@ export const routes: Routes = [
   { path: 'dashboard', loadComponent: () => import('./features/dashboard.component').then(m => m.DashboardComponent) },
   { path: 'practice', loadComponent: () => import('./features/interview-home.component').then(m => m.InterviewHomeComponent) },
   { path: 'practice/:id', loadComponent: () => import('./features/interview-session.component').then(m => m.InterviewSessionComponent) },
+  { path: 'mock-tests', loadComponent: () => import('./features/mock-tests.component').then(m => m.MockTestsComponent) },
+  { path: 'mock-tests/:id', loadComponent: () => import('./features/mock-test-run.component').then(m => m.MockTestRunComponent) },
   { path: 'flashcards', loadComponent: () => import('./features/flashcards.component').then(m => m.FlashcardsComponent) },
   { path: 'plans', loadComponent: () => import('./features/plans.component').then(m => m.PlansComponent) },
   { path: 'plans/:id', loadComponent: () => import('./features/plan-detail.component').then(m => m.PlanDetailComponent) },

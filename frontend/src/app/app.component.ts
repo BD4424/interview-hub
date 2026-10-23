@@ -76,8 +76,9 @@ export class AppComponent {
   groups: { title: string; items: NavItem[] }[] = [
     { title: 'Prepare', items: [
       { path: '/dashboard', label: 'Dashboard', icon: 'dashboard' }, { path: '/practice', label: 'Practice & mock interviews', icon: 'practice' },
-      { path: '/flashcards', label: 'Flashcards', icon: 'brain' }, { path: '/plans', label: 'Interview plans', icon: 'clock' },
-      { path: '/progress', label: 'Progress', icon: 'progress' }, { path: '/bookmarks', label: 'Bookmarks', icon: 'bookmark' }] },
+      { path: '/mock-tests', label: 'Mock tests', icon: 'target' }, { path: '/flashcards', label: 'Flashcards', icon: 'brain' },
+      { path: '/plans', label: 'Interview plans', icon: 'clock' }, { path: '/progress', label: 'Progress', icon: 'progress' },
+      { path: '/bookmarks', label: 'Bookmarks', icon: 'bookmark' }] },
     { title: 'Library', items: [
       { path: '/questions', label: 'Question bank', icon: 'bank' }, { path: '/topics-tags', label: 'Topics & learning paths', icon: 'tag' },
       { path: '/companies', label: 'Companies', icon: 'company' }] },

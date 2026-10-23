@@ -12,7 +12,7 @@ public class FlashcardController {
     private final FlashcardService service;
     public FlashcardController(FlashcardService service) { this.service = service; }
 
-    public record GradeRequest(@NotNull FlashcardService.Grade grade) {}
+    public record GradeRequest(@NotNull FlashcardMath.Grade grade) {}
 
     @GetMapping
     public FlashcardService.Deck deck(@RequestParam(required = false) Long topicId,

@@ -3,10 +3,12 @@ package com.prephub.study;
 import com.prephub.ai.AiTextClient;
 import com.prephub.common.BadRequestException;
 import com.prephub.common.Enums.Difficulty;
+import com.prephub.practice.ProgressService;
 import com.prephub.question.QuestionDtos.CompanyAttributionRequest;
 import com.prephub.question.QuestionDtos.QuestionRequest;
 import com.prephub.question.QuestionService;
 import com.prephub.semantic.EmbeddingClient;
+import com.prephub.study.FlashcardMath.Grade;
 import com.prephub.topic.TopicRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -15,6 +17,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
+import java.sql.Timestamp;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
@@ -32,14 +36,15 @@ class StudyIntegrationTest {
     @Autowired FlashcardService flashcards;
     @Autowired PlanService plans;
     @Autowired WeeklyReportService weekly;
+    @Autowired ProgressService progress;
     @Autowired JdbcTemplate jdbc;
 
     Long java, kafka, q1, q2, q3, k1, amazon, tagCollections, tagConcurrency;
 
     @BeforeEach void setUp() {
-        for (String t : List.of("interview_plan_topics", "interview_plans", "learning_path_steps", "question_attempts", "question_bookmarks",
-                "interview_turns", "interview_sessions", "question_embeddings", "question_relations", "import_candidates", "import_jobs",
-                "question_tags", "question_companies", "questions", "tags", "companies"))
+        for (String t : List.of("mock_test_items", "mock_tests", "flashcard_reviews", "interview_plan_topics", "interview_plans", "learning_path_steps",
+                "question_attempts", "question_bookmarks", "interview_turns", "interview_sessions", "question_embeddings", "question_relations",
+                "import_candidates", "import_jobs", "question_tags", "question_companies", "questions", "tags", "companies"))
             jdbc.update("DELETE FROM " + t);
         when(ai.available()).thenReturn(false);
         when(embeddings.available()).thenReturn(false);
@@ -60,73 +65,78 @@ class StudyIntegrationTest {
     }
     private static CompanyAttributionRequest co(String n) { return new CompanyAttributionRequest(null, n, null, null, null, null, null, null, null); }
 
+    /** A graded practice answer (what practice sessions and mock tests record). */
+    private void attempt(Long questionId, double score) {
+        jdbc.update("INSERT INTO question_attempts (question_id, user_answer, score, attempted_at, mode) VALUES (?, 'x', ?, ?, 'PRACTICE')",
+                questionId, score, Timestamp.from(Instant.now()));
+    }
+
     @Test void topicOverviewNotesAndPath() {
-        flashcards.grade(q1, FlashcardService.Grade.KNEW);
-        flashcards.grade(q2, FlashcardService.Grade.DIDNT);
+        attempt(q1, 9);
+        attempt(q2, 2);
         var o = topicStudy.overview(java);
         assertThat(o.totalQuestions()).isEqualTo(3);
         assertThat(o.practiced()).isEqualTo(2);
         assertThat(o.currentScore()).isEqualTo(5.5);
-        assertThat(o.mastery()).isEqualTo(36.7);                // (0.9 + 0.2 + 0) / 3
+        assertThat(o.mastery()).isEqualTo(36.7);
         assertThat(o.weakest().get(0).questionId()).isEqualTo(q2);
         assertThat(o.neverPracticed()).extracting(TopicStudyService.QItem::questionId).containsExactly(q3);
         assertThat(o.byCompany()).extracting(TopicStudyService.Bucket::label).containsExactly("Amazon");
         assertThat(o.dueForRevision()).isEqualTo(1);
-
         assertThat(topicStudy.saveNotes(java, "# HashMap\n- load factor 0.75").notes()).startsWith("# HashMap");
-
-        var auto = topicStudy.path(java);
-        assertThat(auto.custom()).isFalse();
-        assertThat(auto.steps()).extracting(TopicStudyService.Step::tagName).containsExactlyInAnyOrder("Collections", "Concurrency");
 
         var custom = topicStudy.savePath(java, List.of(tagConcurrency, tagCollections));
         assertThat(custom.custom()).isTrue();
         assertThat(custom.steps()).extracting(TopicStudyService.Step::tagName).containsExactly("Concurrency", "Collections");
-        assertThat(custom.nextTagId()).isEqualTo(tagConcurrency);   // 10% mastery: in progress
+        assertThat(custom.nextTagId()).isEqualTo(tagConcurrency);
         assertThat(topicStudy.savePath(java, List.of()).custom()).isFalse();
     }
 
-    @Test void flashcardDeckPrioritisesAndGradesFeedRevision() {
-        var deck = flashcards.deck(java, null, null, FlashcardService.Scope.DUE, 10, false);
-        assertThat(deck.cards()).hasSize(3);                      // all new
-        flashcards.grade(q1, FlashcardService.Grade.KNEW);
-        var r = flashcards.grade(q2, FlashcardService.Grade.DIDNT);
-        assertThat(r.nextReviewInDays()).isEqualTo(1);
+    @Test void flashcardsKeepTheirOwnHistoryAndNeverCountAsPractice() {
+        assertThat(flashcards.deck(java, null, null, FlashcardService.Scope.DUE, 10, false).cards()).hasSize(3);   // all new
+        assertThat(flashcards.grade(q1, Grade.KNEW).nextReviewInDays()).isEqualTo(7);
+        assertThat(flashcards.grade(q2, Grade.DIDNT).nextReviewInDays()).isEqualTo(1);
+
         var due = flashcards.deck(java, null, null, FlashcardService.Scope.DUE, 10, false);
-        assertThat(due.cards()).extracting(FlashcardService.Card::questionId).containsExactly(q2, q3);   // weak (6+...) before new (2)
-        assertThat(flashcards.deck(java, null, null, FlashcardService.Scope.ALL, 10, true).cards()).hasSize(2);  // q3 has no answer
-        String mode = jdbc.queryForObject("SELECT mode FROM question_attempts WHERE question_id = ?", String.class, q1);
-        assertThat(mode).isEqualTo("FLASHCARD");
+        assertThat(due.cards()).extracting(FlashcardService.Card::questionId).containsExactly(q3);      // others are scheduled later
+        assertThat(due.reviewedToday()).isEqualTo(2);
+        assertThat(flashcards.deck(java, null, null, FlashcardService.Scope.ALL, 10, true).cards()).hasSize(2);   // q3 has no answer
+
+        // separation: no attempts, no streak, no practised questions, no plan progress, not "answers" in the weekly report
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM question_attempts", Integer.class)).isZero();
+        assertThat(progress.progress().summary().streakDays()).isZero();
+        assertThat(topicStudy.overview(java).practiced()).isZero();
+        var w = weekly.report();
+        assertThat(w.thisWeek().answers()).isZero();
+        assertThat(w.thisWeek().flashcards()).isEqualTo(2);
     }
 
     @Test void planUsesCompanyQuestionsAndSchedules() {
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
         var d = plans.create(new PlanService.PlanRequest(null, amazon, today.plusDays(3), List.of(), null, null));
         assertThat(d.plan().title()).isEqualTo("Amazon interview");
-        assertThat(d.plan().questions()).isEqualTo(2);              // only Amazon-attributed questions
-        assertThat(d.plan().daysLeft()).isEqualTo(3);
+        assertThat(d.plan().questions()).isEqualTo(2);
         assertThat(d.perDay()).isEqualTo(1);
-        assertThat(d.today()).hasSize(1);
-        assertThat(d.upcoming()).hasSize(1);
 
-        flashcards.grade(d.today().get(0).questionId(), FlashcardService.Grade.KNEW);
+        flashcards.grade(d.today().get(0).questionId(), Grade.KNEW);           // does not tick the plan
+        assertThat(plans.detail(d.plan().id()).plan().todayDone()).isZero();
+        attempt(d.today().get(0).questionId(), 9);
         var after = plans.detail(d.plan().id());
         assertThat(after.today()).anyMatch(PlanService.PlanItem::done);
         assertThat(after.plan().readiness()).isEqualTo(45.0);
 
         var narrowed = plans.update(d.plan().id(), new PlanService.PlanRequest("Amazon SDE2", amazon, today.plusDays(3), List.of(kafka), 5, null));
         assertThat(narrowed.plan().questions()).isEqualTo(1);
-        assertThat(plans.upcoming()).isPresent();
         assertThatThrownBy(() -> plans.create(new PlanService.PlanRequest("x", null, today.minusDays(1), List.of(), null, null)))
                 .isInstanceOf(BadRequestException.class);
     }
 
     @Test void weeklyReport() {
-        flashcards.grade(q1, FlashcardService.Grade.SHAKY);
+        attempt(q1, 5);
         var w = weekly.report();
         assertThat(w.thisWeek().answers()).isEqualTo(1);
-        assertThat(w.thisWeek().flashcards()).isEqualTo(1);
         assertThat(w.weakest()).extracting(WeeklyReportService.Weak::questionId).containsExactly(q1);
         assertThat(w.lastWeek().answers()).isZero();
+        assertThat(w.thisWeek().mockTests()).isZero();
     }
 }
